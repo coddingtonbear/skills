@@ -1,13 +1,22 @@
 ---
 name: dev-log
-description: Manage Development Logs in the Obsidian vault — find the right project note, add decision/finding entries, and mark entries obsolete. Use when documenting a decision, trade-off, or finding during development work, when the user mentions "dev log" or "development log", or before reading or updating any "Development Logs" section of a vault note.
+description: >-
+  Maintains Development Log sections in Obsidian notes during active work:
+  finds the right project note, records implementation decisions, trade-offs,
+  and discussion points without waiting to be asked, and marks superseded
+  entries obsolete. Use when documenting development progress, appending
+  Development Logs, capturing dev decisions, when the user mentions "dev log"
+  or "development log", or before reading or updating any "Development Logs"
+  section — including Jira issue notes under issues/.
 ---
 
 # Development Logs
 
-Decisions, trade-offs, and durable findings made during development are documented in a `# Development Logs` section of the relevant project note in the Obsidian vault. Write these entries **proactively, without waiting to be asked** — whenever we decide an implementation detail, accept a trade-off, uncover something a future reader of the work would need, or spot something to raise in a demo.
+Decisions, trade-offs, discussion points for demos, and durable findings made during development are documented in a `# Development Logs` section of the relevant project note in the Obsidian vault. Write these entries **proactively, without waiting to be asked** — whenever we decide an implementation detail, accept a trade-off, uncover something a future reader of the work would need, or need to bring up a particular discussion point during a demo.
 
-All vault access goes through the `mcp__obsidian__*` tools — never filesystem reads/writes, even if a directory of look-alike markdown files is visible.
+All vault access goes through the Obsidian MCP tools — never filesystem reads/writes, even if a directory of look-alike markdown files is visible.
+
+When writing Development Log markdown, also follow **obsidian-formatting** for headings and linking.
 
 ## Finding the relevant note
 
@@ -17,7 +26,7 @@ Most things have a URL — a GitHub repository, issue, or discussion; a website;
 {"==": [{"var": "frontmatter.url"}, "<the-url>"]}
 ```
 
-via `mcp__obsidian__search_query`.
+via `search_query`.
 
 For a git checkout, get the URL from `git remote get-url origin` and normalize it: `git@github.com:owner/repo` and `https://github.com/owner/repo` are the same repository, and the **HTTPS form is what the vault uses**. Strip any trailing `.git`.
 
@@ -57,3 +66,9 @@ Never rewrite, trim, or delete an existing entry's body — new information gets
 - **Long documents**: Development Logs get *extensive*. Call `vault_get_document_map` first to see the headings that exist, then read only the sections that matter (`vault_read` with `targetType`/`target`) instead of the whole note.
 - **Appending an entry**: prefer a targeted `vault_patch` append to the `Development Logs` heading over rewriting the file.
 - **Human edits race with mine**: vault notes may be edited between my read and my write. Before any operation that could lose data (`vault_write`, or `vault_patch` with the `replace` method), re-fetch the relevant content and confirm it still matches what my draft was based on.
+
+## Related skills
+
+- **obsidian-formatting** — heading ladder, wikilinks, and vault markdown structure when writing log entries
+- **jira-ticket-workflow** — ticket kickoff; reads issue notes and delegates ongoing Development Log maintenance to this skill
+- **create-jira-note-in-obsidian** — creates the issue note when one does not exist yet
