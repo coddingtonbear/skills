@@ -1,6 +1,6 @@
 ---
 name: claude-tasks
-description: Pick up, work, and file delegated TickTick tasks. Use when the user says "let's look at your tasks", "get started on whatever's next", "what's on your plate", "pick up the next task", "add a task for this", or otherwise asks Claude to work from or write to its TickTick queue.
+description: Pick up, work, and file delegated TickTick tasks, and name them safely (the "#" tag hazard). Use when the user says "let's look at your tasks", "get started on whatever's next", "what's on your plate", "pick up the next task", "add a task for this", or otherwise asks Claude to work from or write to its TickTick queue.
 ---
 
 # Working my delegated TickTick task queue
@@ -65,15 +65,31 @@ All vault access goes through `mcp__obsidian__*` tools per the **dev-log** skill
 2. **Integration-test evidence comment**: run the project's live/integration suite on the branch (for icloud-md: `ICLOUD_MD_ITEST=1 npm run test:integration`) and post a PR comment with the results — hopefully: passing. The comment should prove, to the best of my ability, that the PR is going in the right direction: concrete numbers from the run (tests passed, relevant traffic observed in debug logs), corroborating evidence from captures or reference clients, an explicit accounting of any ways the PR might expose us to further risks and what bounds each, and the honest gaps (what the run did *not* exercise). If the suite fails or can't run, say so in the comment and in the report — don't skip silently.
 3. **Dev log**: add an entry (if any is warranted — almost always yes for code work) to the **task note's** `# Development Logs` section — invoke the **dev-log** skill for the conventions (entry format, immutability, vault-safety cautions). Cover what was done, key decisions/trade-offs, branch name, and verification performed. Findings that outlive the task still go to the project note.
 4. **Close out the task**: remove `claude-inflight`, add `claude-complete`, then **complete the task** (`complete_task`). Closing my own tasks is in scope — the user reviews the *deliverable*, not the task.
-5. **Review handoff — only when the deliverable has no review cycle of its own.** A PR (or anything else with a well-defined outside review loop) needs nothing further: the review happens there. For everything else (investigations, research, vault work, write-ups), create a **new task** — not a subtask; the parent is now closed — in the same list, named **"Review: <original task title>"**, untagged and unprioritized. Its body should read like a PR description: what was asked, what was done and why, what changed (with links to the deliverable — the note, dev log entry, or write-up), the impacts and risks of the work, what specifically to look at, and any honest gaps. TickTick has no first-class task linking, so link the originating task by its web URL — `https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>` — near the top of the body.
+5. **Review handoff — only when the deliverable has no review cycle of its own.** A PR (or anything else with a well-defined outside review loop) needs nothing further: the review happens there. For everything else (investigations, research, vault work, write-ups), create a **new task** — not a subtask; the parent is now closed — in the same list, named **"Review: <original task title>"**, untagged and unprioritized — stripping any `#` token the original title carried (see Task titles: the `#` hazard). Its body should read like a PR description: what was asked, what was done and why, what changed (with links to the deliverable — the note, dev log entry, or write-up), the impacts and risks of the work, what specifically to look at, and any honest gaps. TickTick has no first-class task linking, so link the originating task by its web URL — `https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>` — near the top of the body.
 6. **Report, then pause**: summarize what was done, the PR or review-task link, what to review, anything surprising — then **stop and invite the user to review before continuing**. Don't roll into the next task (or further changes on this one) until they've had their say.
 
 **When blocked or the premise fails:** leave the task open, remove `claude-inflight`, add a TickTick comment (`add_comment`, plain text ≤1024 chars) stating what blocked it and what's needed, and report. If investigation reveals the task's premise is wrong (bug can't reproduce, approach in the body won't work), that's a `discuss-first`-style stop even in autonomous mode: log findings in the dev log, comment, and discuss — don't silently pivot to a different solution than the task describes.
+
+## Task titles: the `#` hazard
+
+TickTick parses `#word` in a **task title** as a tag reference, and creates the tag if it doesn't already exist. So a title like `Fix flaky test from #482` or `#1 priority: rotate the API key` silently invents a `482` or `1` label and pollutes the account's tag list — the stray `1` tag already in `list_tags` came from exactly this mistake.
+
+**Rule: a title I write contains no `#` character unless it is a deliberate reference to a tag that already exists.** This applies everywhere a title is set — `create_task`, `batch_add_tasks`, `update_task`, and the derived `Review: <original task title>` task (which inherits the hazard from the title it copies; strip it there too).
+
+Before any call that sets a title, scan the string for `#` and resolve each occurrence:
+
+- **Not meant as a tag** (the common case — PR/issue numbers, ordinals, ticket refs, channel names): rewrite it out of the title. `#482` → `PR 482`; `#1 priority` → `top priority`; `owner/repo#5` → `owner/repo PR 5`. Don't reach for a near-miss like `PR #482` — the `#482` token is still there and still parses.
+- **Meant as a tag**: don't spell it in the title at all. Put the bare name in the task's `tags` array, and only after confirming it exists via `mcp__ticktick__list_tags`. Inventing tags is the user's call, not mine — the same rule that governs `greenlit` and `discuss-first`.
+
+The `#` is only special in titles. Task bodies (`content`) and comments are plain text, so `#482` there is safe and is the right place for the full reference — which is where the detail belongs anyway.
+
+If the user dictates a title containing a `#` token, apply the rewrite and mention it in the report rather than passing it through; keep it verbatim only if they say the tag is what they want. And if a stray tag does get created, say so in the report — there's no tag-delete tool, so the user has to clean it up by hand.
 
 ## Adding tasks to the queue
 
 The user will often ask me to capture work into TickTick (follow-ups discovered mid-task, findings from reviews, ideas from discussion).
 
+- **Title**: short and recognizable — and free of `#` tokens (see Task titles: the `#` hazard).
 - **List**: the current project's list (via the `ticktick-list` mapping above); Inbox only if no list fits.
 - **Priority**: none — leave it unset unless the user says otherwise.
 - **Body**: detailed, and this matters — outline in depth the work already performed: what was investigated, what was found (with file/function references), why it matters, and any recommended direction. Reference the relevant dev-log entry by note title and timestamp when one exists. A future reader (me, months later, with no context) should be able to start from the body alone.
