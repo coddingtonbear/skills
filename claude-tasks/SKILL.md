@@ -25,7 +25,7 @@ Figuring out *which project we're in* is step one — sessions normally start op
 
 1. **Identify the current project's TickTick list.** From the working directory: `git remote get-url origin`, normalize the URL (`git@github.com:owner/repo` ≡ `https://github.com/owner/repo`), find the vault note with that `url` frontmatter, and read its `ticktick-list` field — that's the list name. Resolve it to a list id via `mcp__ticktick__list_projects`. Keep this note handy: its folder is where task notes live (see Task notes), and its Development Logs hold project-level findings.
 2. **Fetch candidates**: `mcp__ticktick__filter_tasks` with `{"tag": ["claude"], "status": [0], "projectIds": ["<list-id>"]}`, then keep only tasks whose `tags` also include `greenlit` and neither `claude-inflight` nor `claude-complete` (do not trust multi-tag filtering to mean AND — verify client-side).
-3. **Read each candidate's `content` fully.** Task bodies often carry sequencing ("blocked on / sequenced after X"), references to dev-log entries in the vault, and fix direction. A task whose body says it is blocked on an incomplete task is not eligible.
+3. **Read each candidate's `content` fully, and fetch its comments.** Task bodies often carry sequencing ("blocked on / sequenced after X"), references to dev-log entries in the vault, and fix direction. Comments are where the user leaves guidance *after* queuing a task (answers to open questions, direction changes, constraints) — they never come along with the task data, so call `mcp__ticktick__get_comment` (project id + task id) for each candidate. Treat comments as part of the task's instructions; a later comment supersedes the body where they conflict. A task whose body or comments say it is blocked on an incomplete task is not eligible.
 4. **Choose**: default to the order tasks appear in the list (top first — TickTick's `sortOrder`). Take a task out of order only when it would genuinely be better done *after* work further down the list completes — it builds on, is blocked by, or would be reworked by that later task. Explicit sequencing in task bodies is the clearest such signal, and a user-set priority (nonzero) also outranks list position. Skipping ahead needs no confirmation from the user, but the skip must be called out — in the chat report *and* the dev log — along with the rationale for it.
 5. Work **one task at a time**. After finishing and reporting, offer to continue to the next; don't chain through the whole queue unprompted unless the user asked for that.
 
@@ -57,7 +57,7 @@ All vault access goes through `mcp__obsidian__*` tools per the **dev-log** skill
 
 ## Task lifecycle in TickTick
 
-**On starting:** add `claude-inflight` to the task's tags (keep its other tags intact — fetch current tags first), and create the task note with its `# Outline and Plan` section (see Task notes in the vault).
+**On starting:** re-fetch the task's comments (`mcp__ticktick__get_comment`) — new guidance may have landed since the task was surveyed, and it must shape the plan before work begins. Then add `claude-inflight` to the task's tags (keep its other tags intact — fetch current tags first), and create the task note with its `# Outline and Plan` section (see Task notes in the vault).
 
 **On finishing — the default expected steps once the deliverable exists (PR posted, or non-PR work done), in order:**
 
