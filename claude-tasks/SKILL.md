@@ -52,6 +52,10 @@ Figuring out *which project we're in* is step one — sessions normally start op
 7. **Drift check — within a round, not across rounds.** Rounds are never capped: every trip through Waiting is the user choosing to continue, and more questions are better than fewer, bigger ones. The risk is the *autonomous stretch inside a round*, where nobody is in the loop. So at every natural checkpoint — updating the `Phase:` line, abandoning an approach, before opening a PR, writing a dev-log entry — compare where the work is against the plan in the task note, and hand off with `NEEDS: decision` when it has drifted: the approach has changed more than once, the change has grown past what the task described, or elapsed time (check `date` against the start time recorded in the `Phase:` line) is well beyond what the plan implied. Runaway effort is a decision the user gets to make, not something they discover in a bloated PR.
 8. Work **one task at a time**. After finishing a round and reporting, offer to continue; don't chain through the whole queue unprompted unless the user asked for that.
 
+### Loop mode
+
+The user may run this skill on a recurring schedule (`/loop 30m Let's get started on your claude tasks`, or `/loop` self-paced). Each firing is the survey above, and a standing loop *is* the user's "continue": after a task's round ends, the next firing may pick up the next candidate without waiting for a nod. Everything else holds — one task per firing, `NEEDS:` handoffs, the standing gates, no merges. When the queue has nothing actionable, say so in one line ("queue empty — N waiting on you, next check at HH:MM") and stop; don't invent work. When self-pacing, wait longer while the queue is quiet and come back quickly after handing something off, since the user's reply is the likeliest next event.
+
 If there's no repo context (or its list has no Ready tasks), say so and ask whether to look across all lists rather than silently going global. If no vault note matches the repo, ask where the project lives rather than guessing.
 
 ### Global mode: working across every project
