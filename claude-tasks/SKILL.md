@@ -45,7 +45,10 @@ Figuring out *which project we're in* is step one — sessions normally start op
 3. **Report the plate by status, Waiting first.** When asked what's on my plate / what needs them, answer in this order — *Waiting (N)*, *Ready (N)*, *In progress (N)*, *Backlog (N)* — one line per task, and for Waiting and In progress tasks include the task's `Phase:` line (see Multi-phase tasks). Waiting is the user's inbox; leading with it is the point.
 4. **Candidates are `claude-ready` tasks and answered Waiting tasks.**
    - `claude-ready` → a work candidate. Its body and comments are its instructions.
-   - `claude-waiting` → fetch its subtasks (`get_task_by_id` on the parent for `childIds`, then on each child). Find my newest ask subtask (tagged `claude-needs-you`). **Completed** → the user has answered; the answer is the subtask's body below `## Your reply` (empty reply = "take your recommendation"). The parent is now a candidate, and that answer is the instruction. If the reply is itself a question or a partial direction rather than an answer, the round is a *reply*: investigate as needed but produce no deliverable, open a fresh ask subtask, stay `claude-waiting`. **Still open** → untouched. **No ask subtask at all** (a task handed off under the retired comment scheme) → migrate once: turn my newest `NEEDS:` comment into an ask subtask of the same kind, carrying its content into the markdown body, and report the migration; don't treat the comment as answered.
+   - `claude-waiting` → fetch its subtasks (`get_task_by_id` on the parent for `childIds`, then on each child) and find my newest ask subtask (tagged `claude-needs-you`). Then fetch that subtask's comments (`get_comment`). A comment of mine always starts with `Claude says:`; anything else is the user's.
+     - **Completed** → the user is done with it and I may continue: their answer is the subtask's comments (in order) plus anything they added to its body; no comments and no body change = "take your recommendation". The parent is now a candidate and that answer is its instruction. No change to the parent's tags is needed from the user.
+     - **Open, newest comment is the user's** → a question or partial direction while they're still deciding. Answer it *in the same subtask* with a comment starting `Claude says:` (investigate as needed; produce no deliverable). If the answer needs more than a comment's 1024 characters, append a `## Claude says (<timestamp>)` section to the subtask's body — never altering existing text — and leave a short `Claude says:` comment pointing at it. Stay `claude-waiting`.
+     - **Open, newest comment is mine (or none)** → untouched. **No ask subtask at all** (a task handed off under the retired comment scheme) → migrate once: turn my newest `NEEDS:` comment into an ask subtask of the same kind, carrying its content into the markdown body, and report the migration; don't treat the comment as answered.
    Then read each candidate's `content` fully, plus its comments (`get_comment`) — the user may still leave short notes there; a later comment supersedes the body where they conflict. A task whose body or comments say it is blocked on an incomplete task is not eligible.
 5. **Choose**: default to the order tasks appear in the list (top first — `sortOrder`). A task returning from Waiting (an answered ask subtask) generally goes first — the user has just spent attention on it and the context is warm. Otherwise take a task out of order only when it would genuinely be better done *after* work further down completes (it builds on, is blocked by, or would be reworked by that later task); a user-set priority (nonzero) also outranks position. Skipping ahead needs no confirmation, but the skip must be called out — in the chat report *and* the dev log — with the rationale.
 6. **Stale check.** An In progress task with no ask subtask, note edit, or commit from me in over a day is probably an abandoned session. Don't silently skip it: report it, and offer to resume it (read its task note/`Phase:` line and comments, then continue) before starting anything from Ready.
@@ -105,7 +108,8 @@ Setting `claude-waiting` is the *only* way I ask the user for something, and it 
 
 ```
 Phase: 2/4 — checks reported, awaiting go-ahead on refactor options
-Parent: <obsidian:// link to the task note, if one exists> · <PR link, if one exists>
+Note: [projects/software/foo/Task title.md](obsidian://open?vault=Notes&file=…)   (if a task note exists)
+PR: <link>                                                                          (if one exists)
 
 ## What I need
 One paragraph: where the task stands and exactly what I'm asking for.
@@ -118,8 +122,8 @@ One paragraph: where the task stands and exactly what I'm asking for.
 ## Look at
 - links: PR, task note `#Decisions`, file:line …
 
-## Your reply
-_(write here, then complete this subtask — leave empty to take the recommendation)_
+## To answer
+Reply in a comment on this subtask, then complete it — or just complete it to take the recommendation. Questions first? Comment and leave it open; I'll answer here.
 ```
 
 Kinds:
@@ -129,24 +133,25 @@ Kinds:
 - **answer** — a factual question only the user can answer.
 - **unblock** — something I can't do (missing access, capability, or credential; failing infrastructure), and what would unblock it.
 
-**The user's moves.** Completing the ask subtask is the signal, and its body is the content:
+**The user's moves.** Completing the ask subtask is the one signal that I may continue — nothing on the parent task needs to change:
 
-- **accept** — complete it with `## Your reply` empty: take my recommendation and go.
-- **respond** — write under `## Your reply` and complete: the reply is the instruction. If it answers, I go; if it's a question or a partial direction, I answer it in a *new* ask subtask and stay Waiting (a cheap round; rounds are uncapped).
+- **accept** — complete it without commenting: take my recommendation and go.
+- **respond** — comment (or write in the body, for something long), then complete: the reply is the instruction.
+- **discuss** — comment and leave it open: I answer in the same subtask with a `Claude says:` comment and keep waiting. As many rounds as they like; it's the conversation for that ask.
 - **edit** — change the work task's body: I re-read it on pickup.
-- **ignore** — leave the subtask open: still thinking; the task is not mine to touch.
+- **ignore** — leave it open and silent: still thinking; the task is not mine to touch.
 
-Never edit or complete an ask subtask myself once created, and never reuse one: each round gets a fresh subtask, so the parent's completed subtasks are the transcript in order. Then **stop**: report in chat what I handed off, with the subtask's title, and end the turn.
+Every comment I write on an ask subtask starts with `Claude says:` — we share one TickTick account, so the prefix is the only thing that distinguishes my words from the user's. I never complete an ask subtask myself, never change its title or the text already in its body (appending a `## Claude says (<timestamp>)` section is the one allowed edit), and never reuse one for a new ask: each new question after a completed ask gets a fresh subtask, so the parent's completed subtasks are the transcript in order. Then **stop**: report in chat what I handed off, with the subtask's title, and end the turn.
 
 ### Linking to vault notes
 
-TickTick can't search the vault, so every pointer I leave in a task — the `Look at` section of an ask subtask, a task body that cites a dev-log entry — carries a clickable Obsidian URI:
+TickTick can't search the vault, and `obsidian://` links don't open on iOS, so every pointer I leave in a task — the `Note:` line and `Look at` section of an ask subtask, a task body that cites a dev-log entry — is a markdown link whose **label is the full vault path as readable text** and whose target is the Obsidian URI:
 
 ```
-obsidian://open?vault=Notes&file=<vault-relative path without .md, URL-encoded>
+[projects/software/icloud-md/Shared note editing.md](obsidian://open?vault=Notes&file=projects/software/icloud-md/Shared%20note%20editing)
 ```
 
-The vault is named `Notes`. Encode spaces as `%20` and keep folder separators as `/` (e.g. `obsidian://open?vault=Notes&file=projects/icloud-md/Shared%20note%20editing`). To land on a section, append the heading: `...&file=<path>%23Decisions`. Always link to the task note's `# Decisions` section in a `Needs review` subtask and in the finishing report, since that's where the user's review starts. Also include the link in the chat report so the user can open the note from either side.
+On desktop it's a click; on a phone the label is enough to find the note by hand. The vault is named `Notes`. In the URI, encode spaces as `%20` and keep folder separators as `/`; to land on a section, append the heading: `...&file=<path>%23Decisions` (and say so in the label: `… .md › Decisions`). Always link to the task note's `# Decisions` section in a `Needs review` subtask and in the finishing report, since that's where the user's review starts. Also include the link in the chat report so the user can open the note from either side.
 
 ## Multi-phase tasks: one task, many rounds
 
