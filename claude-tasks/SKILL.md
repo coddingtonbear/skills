@@ -108,7 +108,7 @@ Scope is whatever the task says — tasks are not limited to coding. Research, w
 
 Setting `claude-waiting` is the *only* way I ask the user for something, and it always comes with exactly one **ask subtask** — a real item on the user's list, with a full markdown body, that they answer by completing. Comments are not used for handoffs: they're capped at 1024 plain-text characters and are tedious to find.
 
-**Create it** in two calls — `create_task` **ignores `parentId`** (verified 2026-08-25: the task lands top-level), so create it, then `update_task` with `parentId` = the work task and confirm the response shows it. Same `projectId` as the parent, tags `["claude-needs-you"]` (nothing else — it's the user's item, not a work task), no priority, no due date. Title: `Needs <kind>: <one-line summary>` — no `#` characters (see Task titles). Body, in markdown:
+**Create it** in two calls — `create_task` **ignores `parentId`** (verified 2026-08-25: the task lands top-level), so create it, then `update_task` with `parentId` = the work task and confirm the response shows it — a minimal `{id, projectId, parentId}` update sometimes comes back with `parentId` still null and the etag unchanged; if so, retry including `title`, `tags`, and `status` in the payload, which has always taken. Same `projectId` as the parent, tags `["claude-needs-you"]` (nothing else — it's the user's item, not a work task), no priority, no due date. Title: `Needs <kind>: <one-line summary>` — no `#` characters (see Task titles). Body, in markdown:
 
 ```
 Phase: 2/4 — checks reported, awaiting go-ahead on refactor options
@@ -133,7 +133,7 @@ Reply in a comment on this subtask, then complete it — or just complete it to 
 Kinds:
 
 - **decision** — a gate was hit or the approach needs choosing; options enumerated with a recommendation.
-- **review** — a deliverable without its own review loop (an investigation, research, vault work, a write-up) is done and wants eyes. The body reads like a PR description: what was asked, what was done and why, what changed with links, risks, what to look at, honest gaps. A PR does *not* need this: its review happens on GitHub, and the work task is completed directly.
+- **review** — a deliverable is done and wants eyes: a PR, or anything without a review loop of its own (an investigation, research, vault work, a write-up). For a PR the title is `Needs review: PR <n> — <title>` and the body carries the PR link, a short summary of the change, the integration-test evidence, the `# Decisions` link, and what to look at first; the code review itself still happens on GitHub — the ask is the pointer in the user's inbox, and review-comment rounds ("address X") flow back through it like any other reply. For a non-PR deliverable the body reads like a PR description: what was asked, what was done and why, what changed with links, risks, what to look at, honest gaps.
 - **answer** — a factual question only the user can answer.
 - **unblock** — something I can't do (missing access, capability, or credential; failing infrastructure), and what would unblock it.
 
@@ -195,9 +195,7 @@ All vault access goes through `mcp__obsidian__*` tools per the **dev-log** skill
 1. **Task note `url`**: set it to the PR's HTTPS URL (see Task notes in the vault).
 2. **Integration-test evidence comment**: run the project's live/integration suite on the branch (for icloud-md: `ICLOUD_MD_ITEST=1 npm run test:integration`) and post a PR comment with the results. Concrete numbers from the run, corroborating evidence, an explicit accounting of any new risks and what bounds each, and the honest gaps. If the suite fails or can't run, say so in the comment and the report — never skip silently.
 3. **Dev log**: add an entry (almost always warranted for code work) to the task note's `# Development Logs` (or the project note's, if no task note) — invoke the **dev-log** skill for the conventions. Cover what was done, key decisions/trade-offs, branch name, verification. Make sure `# Decisions` is complete.
-4. **Close out or hand off**:
-   - deliverable has its own review loop (a PR): update `Phase:` to `done — PR <url>`, remove `claude-inflight`, then `complete_task`. Closing my own tasks is in scope — the user reviews the deliverable, not the task.
-   - anything else: a `Needs review` ask subtask, swap to `claude-waiting`. When the user completes it with an empty or approving reply, complete the work task; otherwise the reply is the next round's instruction.
+4. **Hand off for review** — always, PR or not: a `Needs review` ask subtask, update `Phase:` to `delivered — PR <url>` (or the deliverable's link), swap to `claude-waiting`. When the user completes the ask with no reply or an approving one (merged, "looks good"), complete the work task — closing my own tasks is in scope; the user reviews the deliverable, not the task. Any other reply (review comments to address, a change of direction) is the next round's instruction, and the work continues on the same branch and PR.
 5. **Report, then pause**: summarize what was done, the PR link and the `obsidian://` link to the task note (see Linking to vault notes), what to look at (point at `# Decisions` first), anything surprising — then stop and invite review before continuing.
 
 **When blocked or the premise fails:** a `Needs unblock` or `Needs decision` ask subtask as appropriate, swap to `claude-waiting`, report. Never leave a task `claude-inflight` at the end of a turn unless I'm genuinely mid-work and about to continue.
