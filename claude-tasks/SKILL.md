@@ -101,7 +101,7 @@ Scope is whatever the task says — tasks are not limited to coding. Research, w
 
 Setting `claude-waiting` is the *only* way I ask the user for something, and it always comes with exactly one **ask subtask** — a real item on the user's list, with a full markdown body, that they answer by completing. Comments are not used for handoffs: they're capped at 1024 plain-text characters and are tedious to find.
 
-**Create it** with `create_task`: `parentId` = the work task, same `projectId`, tags `["claude-needs-you"]` (nothing else — it's the user's item, not a work task), no priority, no due date. Title: `Needs <kind>: <one-line summary>` — no `#` characters (see Task titles). Body, in markdown:
+**Create it** in two calls — `create_task` **ignores `parentId`** (verified 2026-08-25: the task lands top-level), so create it, then `update_task` with `parentId` = the work task and confirm the response shows it. Same `projectId` as the parent, tags `["claude-needs-you"]` (nothing else — it's the user's item, not a work task), no priority, no due date. Title: `Needs <kind>: <one-line summary>` — no `#` characters (see Task titles). Body, in markdown:
 
 ```
 Phase: 2/4 — checks reported, awaiting go-ahead on refactor options
