@@ -5,9 +5,15 @@ command you can watch and stop. Each firing is a fresh Claude Code session
 (`claude -p`), so no context accumulates — all state lives in TickTick and the
 vault, and every run re-surveys the queue from scratch.
 
-    ./claude-tasks-loop.sh            # every 30 minutes until Ctrl-C
-    ./claude-tasks-loop.sh 10m        # custom interval
+    ./claude-tasks-loop.sh            # adaptive pacing, 5m..30m, until Ctrl-C
+    ./claude-tasks-loop.sh 2m 1h      # custom min / max wait
     ./claude-tasks-loop.sh --once     # one firing
+
+**Pacing** is adaptive: the skill ends each loop-mode report with
+`CLAUDE_TASKS_RESULT: worked` or `idle`. After `worked` the next firing is
+`min` later; after `idle` the wait doubles, capped at `max`. A run with no
+marker (crash, denied tools) counts as idle and logs a warning, so a broken
+setup backs off instead of hammering.
 
 Run it in a terminal or a tmux window. Output streams to the terminal *and*
 to `~/.local/state/claude-tasks-loop/<timestamp>.log` (last 200 kept).

@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # The claude-tasks loop, run as a normal foreground command:
 #
-#   claude-tasks-loop.sh            # fire every 30 minutes until Ctrl-C
-#   claude-tasks-loop.sh 10m        # different interval (sleep(1) syntax)
+#   claude-tasks-loop.sh            # adaptive: 5m after a run that did work,
+#                                   # doubling while idle, capped at 30m
+#   claude-tasks-loop.sh 2m 1h      # custom min / max (sleep(1) syntax)
 #   claude-tasks-loop.sh --once     # a single firing, then exit
+#
+# Pacing: each firing's report ends with "CLAUDE_TASKS_RESULT: worked|idle"
+# (the claude-tasks skill emits it in loop mode). "worked" resets the wait to
+# MIN; "idle" doubles it up to MAX; a missing marker counts as idle and warns.
 #
 # Every firing is a FRESH headless Claude Code session (`claude -p`), so no
 # context accumulates across firings: all state lives in TickTick and the
@@ -63,13 +68,19 @@ for line in sys.stdin:
 '
 }
 
-INTERVAL="30m"
+# sleep(1)-style duration -> seconds (e.g. 90, 5m, 2h)
+to_seconds() {
+  local d="$1" n="${1%[smhd]}"
+  case "$d" in
+    *s) echo "$n" ;; *m) echo $((n*60)) ;; *h) echo $((n*3600)) ;; *d) echo $((n*86400)) ;;
+    *) echo "$d" ;;
+  esac
+}
+
 ONCE=0
-case "${1:-}" in
-  --once) ONCE=1 ;;
-  "") ;;
-  *) INTERVAL="$1" ;;
-esac
+MIN_WAIT=$(to_seconds "${1:-5m}")
+MAX_WAIT=$(to_seconds "${2:-30m}")
+[ "${1:-}" = "--once" ] && ONCE=1
 
 mkdir -p "$LOGDIR"
 
@@ -96,6 +107,16 @@ fire() {
   exec 9>&-   # release the lock between firings
   # keep the last 200 logs
   ls -1t "$LOGDIR"/*.log 2>/dev/null | tail -n +201 | xargs -r rm -f
+
+  # Outcome marker, read back from the log (works for plain and stream-json output).
+  if grep -q 'CLAUDE_TASKS_RESULT: *worked' "$log"; then
+    LAST_RESULT=worked
+  elif grep -q 'CLAUDE_TASKS_RESULT: *idle' "$log"; then
+    LAST_RESULT=idle
+  else
+    LAST_RESULT=unknown
+    echo "$(date -Is) warning: no CLAUDE_TASKS_RESULT marker in output; treating as idle" | tee -a "$log"
+  fi
 }
 
 trap 'echo; echo "loop stopped"; exit 0' INT TERM
@@ -105,8 +126,15 @@ if [ "$ONCE" = 1 ]; then
   exit 0
 fi
 
+WAIT=$MIN_WAIT
 while true; do
+  LAST_RESULT=unknown
   fire
-  echo "$(date -Is) next firing in $INTERVAL (Ctrl-C to stop)"
-  sleep "$INTERVAL"
+  if [ "$LAST_RESULT" = worked ]; then
+    WAIT=$MIN_WAIT
+  else
+    WAIT=$(( WAIT * 2 )); [ "$WAIT" -gt "$MAX_WAIT" ] && WAIT=$MAX_WAIT
+  fi
+  echo "$(date -Is) last run: $LAST_RESULT; next firing in $((WAIT/60))m$((WAIT%60))s (Ctrl-C to stop)"
+  sleep "$WAIT"
 done
