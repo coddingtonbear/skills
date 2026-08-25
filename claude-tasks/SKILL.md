@@ -54,6 +54,19 @@ Figuring out *which project we're in* is step one — sessions normally start op
 
 If there's no repo context (or its list has no Ready tasks), say so and ask whether to look across all lists rather than silently going global. If no vault note matches the repo, ask where the project lives rather than guessing.
 
+### Global mode: working across every project
+
+When the session starts from a folder that contains the checkouts rather than from one of them — `~/Documents/Projects` is the intended root; `~/` also works but puts the whole home directory in scope and makes unanchored searches slow — or the user asks to look across all lists, work the whole queue rather than one list's slice:
+
+1. **Fetch globally**: `filter_tasks` `{"tag": ["claude"], "status": [0]}` with no `projectIds`, plus the same for `claude-waiting`; bucket by status tag as usual, and group the report by list.
+2. **Resolve each task's project**: list id → list name (`list_projects`) → the vault note whose `ticktick-list` frontmatter matches (`search_query` on `{"==": [{"var": "frontmatter.ticktick-list"}, "<name>"]}`) → that note's `url`. A task whose list has no project note is not workable in global mode: report it as "no project mapping" and skip it rather than guessing a repo.
+3. **Resolve the checkout**: the note's `path` frontmatter if present; otherwise `~/Documents/Projects/<repo name from the url>`. Verify before touching anything: the directory exists and `git -C <path> remote get-url origin`, normalized, equals the note's `url`. A mismatch or missing checkout is a `NEEDS: unblock` (say which path was expected), not a reason to clone or pick a look-alike.
+4. **Read the repo's own instructions first.** Claude Code only loads `CLAUDE.md` and `.claude/settings.json` from the session's cwd and its ancestors, so a repo entered from outside brings none of its own rules along. Before any work, read `<path>/AGENTS.md` and `<path>/CLAUDE.md` (whichever exist) and follow them as if the session had started there. Its permission allowlist still won't apply, so expect more prompts than an in-repo session; that's normal.
+5. **Work in that checkout with absolute paths** — `git -C`, `npm --prefix`, absolute file paths, and every Glob/Grep anchored under `<path>` — rather than changing directory, so nothing depends on the session's cwd. Everything else in the lifecycle is unchanged: the project note is the one found in step 2, task notes are its peers, branches come off that repo's `main`.
+6. Still **one task at a time**, and say which project each report is about — in global mode the user has no cwd to infer it from.
+
+Global mode is only reliable when the checkouts are inside the session's working directory (or were added with `--add-dir`); from an unrelated folder every file access will prompt. If that happens, say so and suggest restarting from `~/Documents/Projects` instead of fighting through prompts.
+
 ## Autonomy and decision gates
 
 **`claude-plan-required` present:** Investigate thoroughly (read code, reproduce, probe), form a recommended approach, write it into the task note's `# Outline and Plan` (options considered, recommendation, what would change, risks), and hand it back via Waiting with `NEEDS: decision` linking to the plan. Do not implement — no branch, no PR — until the user releases the task with `claude-ready`. If the investigation produced durable findings, log them before stopping.
@@ -138,7 +151,7 @@ All vault access goes through `mcp__obsidian__*` tools per the **dev-log** skill
 
 ## Task lifecycle in TickTick
 
-**On starting (from Ready):** re-fetch comments — new guidance may have landed since the survey. Swap `claude-ready` for `claude-inflight` (fetch the task first; keep every other field and tag intact), set or update the `Phase:` line, and create the task note if warranted.
+**On starting (from Ready):** read the repo's `AGENTS.md` if it has one — the user keeps project instructions there, and Claude Code does *not* load it automatically (only `CLAUDE.md`), so unless a `CLAUDE.md` imports it (`@AGENTS.md`) or symlinks to it, those instructions reach me only by reading the file deliberately. Then re-fetch comments — new guidance may have landed since the survey. Swap `claude-ready` for `claude-inflight` (fetch the task first; keep every other field and tag intact), set or update the `Phase:` line, and create the task note if warranted.
 
 **On needing the user:** write the `NEEDS:` comment, update `Phase:`, swap `claude-inflight` for `claude-waiting`, report, stop.
 
