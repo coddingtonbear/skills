@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # The claude-tasks loop, run as a normal foreground command:
 #
-#   claude-tasks-loop.sh            # adaptive: 5m after a run that did work,
-#                                   # doubling while idle, capped at 30m
-#   claude-tasks-loop.sh 2m 1h      # custom min / max (sleep(1) syntax)
-#   claude-tasks-loop.sh --once     # a single firing, then exit
+#   claude-tasks-loop.sh <scope>            # adaptive: 5m after a run that did
+#                                           # work, doubling while idle, cap 30m
+#   claude-tasks-loop.sh <scope> 2m 1h      # custom min / max (sleep(1) syntax)
+#   claude-tasks-loop.sh <scope> --once     # a single firing, then exit
+#
+# <scope> names the TickTick project groups and/or lists to work, as the
+# skill's prompt expects it: "the work group", "life and open-source",
+# "the icloud-md list". It is required — a headless run cannot ask.
 #
 # Pacing: each firing's report ends with "CLAUDE_TASKS_RESULT: worked|idle"
 # (the claude-tasks skill emits it in loop mode). "worked" resets the wait to
@@ -22,7 +26,13 @@ set -euo pipefail
 ROOT="${CLAUDE_TASKS_ROOT:-$HOME/Documents/Projects}"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop.lock"
 LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop"
-PROMPT="Let's get started on your claude tasks."
+SCOPE="${CLAUDE_TASKS_SCOPE:-}"
+if [ $# -gt 0 ] && [ "$1" != "--once" ]; then SCOPE="$1"; shift; fi
+if [ -z "$SCOPE" ]; then
+  echo "usage: $(basename "$0") <scope> [min max | --once]   e.g. 'the work group'" >&2
+  exit 2
+fi
+PROMPT="Let's get started on your claude tasks in $SCOPE."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
@@ -78,9 +88,9 @@ to_seconds() {
 }
 
 ONCE=0
+if [ "${1:-}" = "--once" ]; then ONCE=1; shift; fi
 MIN_WAIT=$(to_seconds "${1:-5m}")
 MAX_WAIT=$(to_seconds "${2:-30m}")
-[ "${1:-}" = "--once" ] && ONCE=1
 
 mkdir -p "$LOGDIR"
 

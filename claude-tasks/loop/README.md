@@ -5,9 +5,15 @@ command you can watch and stop. Each firing is a fresh Claude Code session
 (`claude -p`), so no context accumulates — all state lives in TickTick and the
 vault, and every run re-surveys the queue from scratch.
 
-    ./claude-tasks-loop.sh            # adaptive pacing, 5m..30m, until Ctrl-C
-    ./claude-tasks-loop.sh 2m 1h      # custom min / max wait
-    ./claude-tasks-loop.sh --once     # one firing
+    ./claude-tasks-loop.sh "the life group"            # adaptive pacing, 5m..30m
+    ./claude-tasks-loop.sh "the work group" 2m 1h      # custom min / max wait
+    ./claude-tasks-loop.sh "life and open-source" --once
+
+The first argument is the **scope** — the TickTick project groups and/or lists
+to work, phrased as the skill's prompt expects ("the work group", "life and
+open-source", "the icloud-md list"). It is required: scope always comes from
+the prompt, never from the filesystem, and a headless run can't ask.
+`CLAUDE_TASKS_SCOPE` can supply it instead.
 
 **Pacing** is adaptive: the skill ends each loop-mode report with
 `CLAUDE_TASKS_RESULT: worked` or `idle`. After `worked` the next firing is
