@@ -22,3 +22,7 @@ Obsidian MCP tools, file tools, and `git`/`gh`/`npm`/`npx`). A denied tool
 should surface in the run as a `NEEDS: unblock`; extend the list via
 `CLAUDE_TASKS_ALLOWED_TOOLS` if that happens. `CLAUDE_TASKS_ROOT` overrides the
 projects root (default `~/Documents/Projects`).
+
+**Model**: `CLAUDE_TASKS_MODEL=opus ./claude-tasks-loop.sh` (an alias or a
+full model id) passes `--model` to each firing. Unset, firings use your normal
+default (`"model"` in `~/.claude/settings.json`, or `ANTHROPIC_MODEL`).

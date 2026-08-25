@@ -23,6 +23,13 @@ PROMPT="Let's get started on your claude tasks."
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
 ALLOWED_TOOLS="${CLAUDE_TASKS_ALLOWED_TOOLS:-mcp__ticktick__*,mcp__obsidian__*,Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(date:*),Bash(ls:*)}"
 
+# Model for headless firings: an alias (opus, sonnet, haiku) or a full model id.
+# Unset = the session default from ~/.claude/settings.json / ANTHROPIC_MODEL.
+MODEL_ARGS=()
+if [ -n "${CLAUDE_TASKS_MODEL:-}" ]; then
+  MODEL_ARGS=(--model "$CLAUDE_TASKS_MODEL")
+fi
+
 INTERVAL="30m"
 ONCE=0
 case "${1:-}" in
@@ -48,6 +55,7 @@ fire() {
       --permission-mode acceptEdits \
       --allowedTools "$ALLOWED_TOOLS" \
       --add-dir "$ROOT" \
+      "${MODEL_ARGS[@]}" \
       2>&1 | tee -a "$log"
   ) || echo "$(date -Is) claude exited non-zero" | tee -a "$log"
   echo "$(date -Is) done" | tee -a "$log"
