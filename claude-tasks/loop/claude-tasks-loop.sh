@@ -30,6 +30,39 @@ if [ -n "${CLAUDE_TASKS_MODEL:-}" ]; then
   MODEL_ARGS=(--model "$CLAUDE_TASKS_MODEL")
 fi
 
+# CLAUDE_TASKS_VERBOSE=1 streams every assistant message and tool call live
+# (stream-json, filtered to a readable feed); the raw JSON goes to the log.
+VERBOSE="${CLAUDE_TASKS_VERBOSE:-0}"
+OUTPUT_ARGS=()
+if [ "$VERBOSE" = 1 ]; then
+  OUTPUT_ARGS=(--output-format stream-json --verbose)
+fi
+
+# Turns stream-json lines into a one-line-per-event feed for the terminal.
+feed() {
+  python3 -u -c '
+import json, sys
+for line in sys.stdin:
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        print(line.rstrip()); continue
+    t = ev.get("type")
+    if t == "assistant":
+        for c in ev.get("message", {}).get("content", []):
+            if c.get("type") == "text" and c.get("text", "").strip():
+                print("assistant:", c["text"].strip().replace("\n", " ")[:300])
+            elif c.get("type") == "tool_use":
+                inp = c.get("input", {})
+                hint = inp.get("command") or inp.get("file_path") or inp.get("path") or inp.get("task_id") or ""
+                print("  tool:", c.get("name"), str(hint)[:120])
+    elif t == "result":
+        print("result:", ev.get("subtype"), "| cost $%.2f" % ev.get("total_cost_usd", 0), "|", ev.get("num_turns"), "turns")
+        r = ev.get("result")
+        if r: print(r.strip()[:2000])
+'
+}
+
 INTERVAL="30m"
 ONCE=0
 case "${1:-}" in
@@ -56,7 +89,8 @@ fire() {
       --allowedTools "$ALLOWED_TOOLS" \
       --add-dir "$ROOT" \
       "${MODEL_ARGS[@]}" \
-      2>&1 | tee -a "$log"
+      "${OUTPUT_ARGS[@]}" \
+      2>&1 | tee -a "$log" | { if [ "$VERBOSE" = 1 ]; then feed; else cat; fi; }
   ) || echo "$(date -Is) claude exited non-zero" | tee -a "$log"
   echo "$(date -Is) done" | tee -a "$log"
   exec 9>&-   # release the lock between firings

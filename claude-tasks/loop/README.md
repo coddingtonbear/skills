@@ -23,6 +23,17 @@ should surface in the run as a `NEEDS: unblock`; extend the list via
 `CLAUDE_TASKS_ALLOWED_TOOLS` if that happens. `CLAUDE_TASKS_ROOT` overrides the
 projects root (default `~/Documents/Projects`).
 
+**Permissions in practice**: headless runs never prompt — a tool outside the
+allowlist is denied outright and the model is told so, which the skill turns
+into a `NEEDS: unblock` on the task. Watch the log for "denied" if a run
+stalls, then extend the allowlist.
+
+**Watching progress**: plain runs print only the final message. Set
+`CLAUDE_TASKS_VERBOSE=1` to stream a live feed — each assistant message and
+tool call as it happens, plus the result line with cost and turn count — while
+the raw `stream-json` still goes to the log. The other live view is TickTick
+itself: the `Phase:` line and the `claude-*` tag move as the run does.
+
 **Model**: `CLAUDE_TASKS_MODEL=opus ./claude-tasks-loop.sh` (an alias or a
 full model id) passes `--model` to each firing. Unset, firings use your normal
 default (`"model"` in `~/.claude/settings.json`, or `ANTHROPIC_MODEL`).
