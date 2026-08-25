@@ -55,13 +55,16 @@ never silently papered over.
 
 ### Instagram reels — caption + transcript
 
-Run yt-dlp **via uvx**, not the system install (`~/bin/yt-dlp` is 2024.10 and
-gets login-walled; verified 2026-08-25 that the current release with Firefox
-cookies succeeds where the system one fails):
+Run yt-dlp with Firefox cookies (verified working 2026-08-25):
 
-    uvx yt-dlp --cookies-from-browser firefox --no-playlist \
+    yt-dlp --cookies-from-browser firefox --no-playlist \
       -x --audio-format mp3 --write-info-json \
       -o "<scratchpad>/<shortcode>.%(ext)s" "<reel-url>"
+
+If Instagram returns "login required" errors, the likeliest cause is a stale
+extractor — the system yt-dlp (updated to 2026.08 by the user on 2026-08-25)
+will drift again: retry the same command via `uvx yt-dlp` (always current)
+before concluding the cookies are the problem.
 
 - **Caption**: the `description` field of the written `.info.json`; `uploader`
   gives the human name for the entry title (yt-dlp's `title` field is junk for
@@ -83,24 +86,40 @@ cookies succeeds where the system one fails):
 
 No transcription (user decision — videos are too long). Metadata only:
 
-    uvx yt-dlp --skip-download --write-info-json --no-playlist -o "<scratchpad>/<id>" "<url>"
+    yt-dlp --skip-download --write-info-json --no-playlist -o "<scratchpad>/<id>" "<url>"
 
 Use `title`, `uploader`, and a trimmed `description`.
 
-### Reddit — best effort, expect failure
+### Reddit — via Chromium cookies
 
-Resolve `/s/` share links first (this works and yields the real post URL):
+The user is logged into Reddit in **Chromium (the Snap build — its profile is
+at `~/snap/chromium/common/chromium`, not `~/.config/chromium`)**. Verified
+2026-08-25: unauthenticated fetches are blocked on every route, but with those
+cookies the JSON API answers normally.
 
-    curl -sL -o /dev/null -w "%{url_effective}" "<share-url>"
+1. Export cookies once per run, into the scratchpad (the file holds live
+   session tokens — never move it elsewhere, never send it to anything but
+   reddit.com, delete it when the run ends):
 
-Content retrieval is unreliable: as of 2026-08-25, `www.reddit.com` and
-`old.reddit.com` serve block pages to curl (even with a browser UA and
-`.json`), and WebFetch refuses the domain. Try WebFetch on the resolved URL
-anyway (things change); if the **claude-in-chrome** skill is available in the
-session, that is the reliable route since it uses the user's real browser
-session. Otherwise write the entry from the resolved URL's slug (it contains
-the post title), the annotation, and an explicit
-`*(content unavailable — annotation only)*` marker.
+       yt-dlp --cookies-from-browser "chromium:~/snap/chromium/common/chromium" \
+         --cookies "<scratchpad>/reddit-cookies.txt" --skip-download --simulate "<any-reddit-url>"
+
+2. Resolve `/s/` share links to the real post URL:
+
+       curl -sL -o /dev/null -w "%{url_effective}" "<share-url>"
+
+3. Fetch the content as JSON (append `.json` to the resolved path, keep its
+   query string; a comment permalink returns `[post, comment-tree]` — the
+   comment body is `d[1].data.children[0].data.body`, the post is
+   `d[0].data.children[0].data`):
+
+       curl -sL -A "<a current desktop-Chrome UA string>" \
+         -b "<scratchpad>/reddit-cookies.txt" "<resolved-url>.json?context=3"
+
+If any step fails, fall back to the resolved URL's slug (it contains the post
+title), the annotation, and an explicit
+`*(content unavailable — annotation only)*` marker — never a confident-looking
+stub.
 
 ### Everything else
 
@@ -121,15 +140,23 @@ toward Discovery**. Mis-categorization is explicitly tolerated.
 Follow **obsidian-formatting**; all vault access via `mcp__obsidian__*` tools.
 
 - **Which note**: the item's *capture date* — TickTick `createdTime` converted
-  to America/Chicago. Derive the daily-note path from
-  `mcp__obsidian__periodic_note_get_path` (today's path shows the folder and
-  filename pattern; substitute the capture date — e.g. `daily/2026-08-08.md`).
-- **Missing note**: create it from `daily/template.md` (five h1 sections:
-  Noise Floor, Events, Insights, Discoveries, Pomodoros). Sparse notes for
-  days that only saved a link are fine and expected.
+  to America/Chicago.
+- **Getting the note** (never copy `daily/template.md` by hand — user
+  instruction, 2026-08-25):
+  - capture date is *today*: `mcp__obsidian__periodic_note_get_path`
+    (`period: "daily"`) — it returns the path and creates the note with the
+    configured template if missing. Its path also reveals the folder and
+    filename pattern for the next case.
+  - capture date is *in the past*: substitute the date into that pattern
+    (e.g. `daily/2026-08-08.md`). If the note does not exist (`vault_patch`
+    cannot create files — verified), create it as an **empty** note with
+    `vault_write` — but only after confirming it is absent, since
+    `vault_write` overwrites. Sparse notes for days that only saved a link
+    are fine and expected.
 - **Placement**: append under `# Insights` or `# Discoveries` per the
-  classification, via `vault_patch` (heading target, `append`) — never a
-  whole-file write over an existing note.
+  classification, via `vault_patch` (heading target, `append`,
+  `createTargetIfMissing: true` so the section is created in an empty note) —
+  never a whole-file write over an existing note.
 - **Block format** — match the existing desktop-clipped entries exactly:
 
       ## <Composed title>
