@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# Smoke test for claude-tasks-loop.sh's run-log behavior, using a stub
+# Smoke test for claude-tasks-loop.sh's run-note plumbing, using a stub
 # `claude` CLI so no real API calls or TickTick/Obsidian access happen.
+#
+# The script itself can't write the run note (it lives in the vault, and only
+# a firing's Obsidian MCP tools can reach it) -- this test only checks that
+# the script computes a sane vault path and a real launch-start timestamp and
+# hands both to the firing via the prompt, and that it no longer writes any
+# local run-log file (that behavior moved into the vault note).
 #
 #   ./test-loop.sh
 set -euo pipefail
@@ -14,42 +20,47 @@ export XDG_RUNTIME_DIR="$TMPROOT/run"
 export CLAUDE_TASKS_ROOT="$TMPROOT/projects"
 mkdir -p "$CLAUDE_TASKS_ROOT" "$XDG_RUNTIME_DIR"
 
+CAPTURED_PROMPT="$TMPROOT/captured-prompt.txt"
 STUBDIR="$TMPROOT/bin"
 mkdir -p "$STUBDIR"
-cat > "$STUBDIR/claude" <<'EOF'
+cat > "$STUBDIR/claude" <<EOF
 #!/usr/bin/env bash
-# Stub for `claude -p ...`: pulls the run-log path out of the prompt text,
-# appends a fake worked entry (as a real firing would), and reports success.
+# Stub for \`claude -p ...\`: just captures the prompt so the test can
+# inspect what the script handed the firing, then reports success.
 prompt=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -p) prompt="$2"; shift 2 ;;
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -p) prompt="\$2"; shift 2 ;;
     *) shift ;;
   esac
 done
-run_log=$(printf '%s' "$prompt" | grep -oE '/[^ ]+\.md')
-if [ -z "$run_log" ]; then
-  echo "stub: no run-log path found in prompt" >&2
-  exit 1
-fi
-printf -- '- 00:00 -- [stub task](https://ticktick.com/webapp/#p/x/tasks/y) -- did the thing. Decision: used a stub.\n' >> "$run_log"
+printf '%s' "\$prompt" > "$CAPTURED_PROMPT"
 echo "stub claude ran"
 echo "CLAUDE_TASKS_RESULT: worked"
 EOF
 chmod +x "$STUBDIR/claude"
 export PATH="$STUBDIR:$PATH"
 
+BEFORE="$(date -Is)"
 "$HERE/claude-tasks-loop.sh" "the test group" --once
-
-LOGDIR="$XDG_STATE_HOME/claude-tasks-loop"
-RUN_LOG="$(ls "$LOGDIR"/run-*.md 2>/dev/null | head -n1 || true)"
+AFTER="$(date -Is)"
 
 fail() { echo "FAIL: $1"; exit 1; }
 
-[ -n "$RUN_LOG" ] || fail "no run log created under $LOGDIR"
-[ "$(ls "$LOGDIR"/run-*.md | wc -l)" = 1 ] || fail "expected exactly one run log for this launch"
-grep -q '^# claude-tasks loop run' "$RUN_LOG" || fail "run log missing header"
-grep -q '^Scope: the test group$' "$RUN_LOG" || fail "run log missing scope line"
-grep -q 'did the thing' "$RUN_LOG" || fail "firing's appended entry missing from run log"
+[ -f "$CAPTURED_PROMPT" ] || fail "stub claude never ran / prompt not captured"
+
+RUN_NOTE="$(grep -oE 'claude-loops/[^ ]+\.md' "$CAPTURED_PROMPT" || true)"
+[ -n "$RUN_NOTE" ] || fail "prompt has no claude-loops/*.md vault path"
+
+LAUNCH_STARTED="$(grep -oE 'started at [^.]+' "$CAPTURED_PROMPT" | sed 's/started at //' || true)"
+[ -n "$LAUNCH_STARTED" ] || fail "prompt has no launch-start timestamp"
+# Sanity: it's a real ISO-8601 timestamp from `date`, not a placeholder, and
+# falls within this test run's own wall-clock window.
+[[ "$LAUNCH_STARTED" > "$BEFORE" || "$LAUNCH_STARTED" == "$BEFORE" ]] || fail "launch timestamp $LAUNCH_STARTED predates the test run"
+[[ "$LAUNCH_STARTED" < "$AFTER" || "$LAUNCH_STARTED" == "$AFTER" ]] || fail "launch timestamp $LAUNCH_STARTED is after the test run"
+
+LOGDIR="$XDG_STATE_HOME/claude-tasks-loop"
+[ -n "$(ls "$LOGDIR"/*.log 2>/dev/null || true)" ] || fail "expected a session .log under $LOGDIR"
+[ -z "$(ls "$LOGDIR"/run-*.md 2>/dev/null || true)" ] || fail "found a local run-*.md -- run notes now live in the vault, not $LOGDIR"
 
 echo "PASS"

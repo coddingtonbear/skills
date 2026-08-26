@@ -66,11 +66,25 @@ The same survey and lifecycle run in an ordinary session — the user opens Clau
 
 The user runs this skill on a recurring schedule — normally `claude-tasks/loop/claude-tasks-loop.sh`, a foreground script that starts a fresh headless `claude -p` session per firing (so no context accumulates), or interactively with `/loop`. **A survey assumes nothing from earlier turns**: everything is re-fetched from TickTick and the vault every time, and a compacted or resumed session never acts on its summary of the queue. Each firing is the survey above, and a standing loop *is* the user's "continue": after a task's round ends, the next firing may pick up the next candidate without waiting for a nod. Everything else holds — one task per firing, ask-subtask handoffs, the standing gates, no merges. When the queue has nothing actionable, say so in one line ("queue empty — N waiting on you") and stop; don't invent work. **The last line of every loop-mode report is a machine-readable outcome marker** the loop script paces itself on: `CLAUDE_TASKS_RESULT: worked` if the firing changed anything (a status tag, an ask subtask, a task note, a branch or PR, an answered reply, a handoff close-out), otherwise `CLAUDE_TASKS_RESULT: idle`. Emit it even when the firing ended in an ask-subtask handoff or an error — a handoff is `worked`. When self-pacing, wait longer while the queue is quiet and come back quickly after handing something off, since the user's reply is the likeliest next event.
 
-**Run log.** The loop script also passes the path to a single markdown run log, shared by every firing of that *launch* of the script (one file per invocation of `claude-tasks-loop.sh`, including a `--once` firing — not one per firing). It's named in the prompt: "Loop run log: `<path>`". Whenever a firing does anything (`CLAUDE_TASKS_RESULT: worked`), append one line to that file before emitting the marker, creating it with `Write`/`Edit` if it doesn't exist yet (the script pre-creates it with a header, so normally this is an append):
+**Run log.** The loop script also passes the vault path to a single run-log note, shared by every firing of that *launch* of the script (one note per invocation of `claude-tasks-loop.sh`, including a `--once` firing — not one per firing), plus the launch's actual start time from `date`: "Loop run note: vault path `claude-loops/<slug>.md` ... This launch started at `<ISO timestamp>`." Never guess any timestamp that goes into this note — every one comes from a `date` call, at the moment it's needed. Whenever a firing does anything (`CLAUDE_TASKS_RESULT: worked`), before emitting the marker:
 
-`- <HH:MM> — [<task title>](<ticktick task URL>) — <what happened, one sentence>. Decision: <one sentence, if any major decision was made — omit otherwise>. Note: [<vault path>](<obsidian URI>) (if a task note exists)`
+- **Note doesn't exist yet** (the first firing of the launch) — create it with `vault_write`:
+  ```
+  # claude-tasks loop run
 
-Get the TickTick task URL from `https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>`. Keep it to one line — this is an index for skimming a launch's activity, not a record; the detail lives on the task note's `# Decisions` and Development Logs (see Linking to vault notes), same as everywhere else. An `idle` firing appends nothing. If no run-log path was given in the prompt (e.g. running the skill's prompt by hand, outside the script), skip this step — it's a loop-script convenience, not a hard requirement of loop mode itself.
+  Started: [[<date>]] <time>
+  Scope: <scope>
+
+  ## Tasks
+
+  - <this firing's entry>
+  ```
+  using the launch-start timestamp given in the prompt (not a fresh `date` call — that's the *loop's* start, not this firing's), split into an Obsidian date link (`[[2026-08-26]]`) and a time (`11:20`).
+- **Note already exists** (a later firing in the same launch) — `vault_patch`-append the entry under `## Tasks` instead of rewriting the note.
+
+Entry, one line: `- [[<start date>]] <start time>–<end time> — [<task title>](<ticktick task URL>) — <what happened, one sentence>. Decision: <one sentence, if any major decision was made — omit otherwise>. Note: [<vault path>](<obsidian URI>) (if a task note exists)`. Get the start time from the task's `Phase:` line (set at first pickup from `date`, per Multi-phase tasks); get the end time with a fresh `date` call right before writing the entry. If the task spanned midnight, link both dates: `[[<start date>]] <start time>–[[<end date>]] <end time>`.
+
+Get the TickTick task URL from `https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>`. Keep entries to one line each — this is an index for skimming a launch's activity, not a record; the detail lives on the task note's `# Decisions` and Development Logs (see Linking to vault notes), same as everywhere else. An `idle` firing writes nothing. If no run-note path was given in the prompt (e.g. running the skill's prompt by hand, outside the script), skip this step — it's a loop-script convenience, not a hard requirement of loop mode itself.
 
 If there's no repo context (or its list has no Ready tasks), say so and ask which groups or lists to work (see Global mode) rather than silently going global. If no vault note matches the repo, ask where the project lives rather than guessing.
 

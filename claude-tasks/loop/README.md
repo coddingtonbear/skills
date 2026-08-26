@@ -40,13 +40,16 @@ allowlist is denied outright and the model is told so, which the skill turns
 into a `NEEDS: unblock` on the task. Watch the log for "denied" if a run
 stalls, then extend the allowlist.
 
-**Run log**: each launch of the script writes one markdown file,
-`$LOGDIR/run-<timestamp>.md`, shared across every firing of that launch (a
-`--once` run gets its own too). The skill has each firing append a brief line
-when it works a task — task title, TickTick link, one-sentence summary, and
-any major decision — so a launch's activity reads as one skimmable list. Full
-detail stays on the task's own Obsidian note, per the skill's Loop mode
-section. Old run logs are pruned the same way as session logs (last 200 kept).
+**Run log**: each launch of the script gets one Obsidian note, in the vault's
+`claude-loops/` folder, shared across every firing of that launch (a `--once`
+run gets its own too) — the script passes the note's vault path and the
+launch's real start time (from `date`) to each firing. The skill has the
+first firing create the note and every firing that works a task append a
+brief, timestamped line — task title, TickTick link, one-sentence summary,
+and any major decision — so a launch's activity reads as one skimmable list,
+with dates as Obsidian links (`[[2026-08-26]]`). Full detail stays on the
+task's own Obsidian note, per the skill's Loop mode section. The note lives
+in the vault, not on disk, so it isn't part of the `$LOGDIR` log rotation.
 
 **Watching progress**: plain runs print only the final message. Set
 `CLAUDE_TASKS_VERBOSE=1` to stream a live feed — each assistant message and
