@@ -38,8 +38,12 @@
 #   CLAUDE_TASKS_SECRETS      shell-sourceable secrets file (default ~/.secrets)
 #   CLAUDE_TASKS_SCOPE        the scope string this loop was launched with
 #   CLAUDE_TASKS_SCOPE_FILE   resolved project ids (line 1: the scope string
-#                             they were resolved from; then one id per line)
-#   CLAUDE_TASKS_STATE_FILE   where the queue fingerprint is kept
+#                             they were resolved from; then one id per line);
+#                             defaults to a per-scope path under $LOGDIR
+#   CLAUDE_TASKS_STATE_FILE   where the queue fingerprint is kept; likewise
+#                             per-scope, so two loops don't share one
+#   CLAUDE_TASKS_LOCK         the loop's lockfile; a tick is skipped outright
+#                             while another firing holds it
 #   CLAUDE_TASKS_API_BASE     API base (default TickTick's; overridden by tests)
 set -uo pipefail
 
@@ -47,8 +51,12 @@ LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop"
 API="${CLAUDE_TASKS_API_BASE:-https://api.ticktick.com/open/v1}"
 SECRETS="${CLAUDE_TASKS_SECRETS:-$HOME/.secrets}"
 SCOPE="${CLAUDE_TASKS_SCOPE:-}"
-SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope.ids}"
-STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue.state}"
+LOCK="${CLAUDE_TASKS_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop.lock}"
+# Keyed by scope, so two loops over different scopes keep separate files --
+# claude-tasks-loop.sh derives the same key and normally passes both paths.
+SCOPE_KEY="$(printf '%s' "$SCOPE" | sha256sum | cut -c1-12)"
+SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope-$SCOPE_KEY.ids}"
+STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue-$SCOPE_KEY.state}"
 
 say()  { echo "$(date -Is) precheck: $1" >&2; }
 fire() { say "$1 -> firing"; exit 0; }
@@ -56,6 +64,16 @@ skip() { say "$1 -> skipping (no tokens spent)"; exit 10; }
 
 command -v curl    >/dev/null 2>&1 || fire "curl not found"
 command -v python3 >/dev/null 2>&1 || fire "python3 not found"
+
+# If a firing already holds the loop's lock there is nothing this tick can do
+# but wait -- and firing anyway would be worse than useless: the loop's own
+# flock would turn it away *after* this script had already recorded a
+# fingerprint, marking as handled a change nobody acted on. Bail out before
+# touching the API or the state file. The lock is released again immediately
+# so a real firing is never held up by a pre-check.
+if [ -e "$LOCK" ] && command -v flock >/dev/null 2>&1; then
+  flock -n "$LOCK" true || skip "a firing is already running"
+fi
 
 if [ -z "${TICKTICK_API_TOKEN:-}" ] && [ -r "$SECRETS" ]; then
   set -a; . "$SECRETS" >/dev/null 2>&1 || true; set +a

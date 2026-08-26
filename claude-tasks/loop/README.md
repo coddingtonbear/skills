@@ -51,6 +51,19 @@ project id per line after it. Until a firing has written one, every tick fires
 exactly as before. `CLAUDE_TASKS_PRECHECK=0` disables the pre-check entirely;
 `--once` ignores it, since that's an explicit "run now".
 
+**It cooperates with the overlap lock.** A tick whose firing the `flock` would
+turn away is skipped at the pre-check instead, before any API call — otherwise
+the check would fingerprint a change, the firing would be refused the lock, and
+that change would be recorded as handled without anyone acting on it. Belt and
+braces: a firing that *is* turned away deletes the fingerprint, so nothing the
+lock swallowed can be written off. A lock-blocked tick now also stays at `min`
+rather than backing off, which is what you want while the other loop works.
+
+Both the scope-ids file and the fingerprint are **keyed by scope**
+(`scope-<hash>.ids`, `queue-<hash>.state`), so running one loop over the work
+group and another over life doesn't have them overwriting each other's state —
+which would leave both permanently failing open and silently doing no good.
+
 Run it by hand to see what it would decide — it prints its reasoning to stderr
 and exits `0` to fire, `10` to skip:
 

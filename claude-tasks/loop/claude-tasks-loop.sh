@@ -61,9 +61,16 @@ LAUNCH_STARTED="$(date -Is)"
 RUN_NOTE="claude-loops/$(date +%Y-%m-%dT%H-%M-%S).md"
 
 # Where a firing records the project ids it resolved $SCOPE to, so the
-# pre-check can query the same lists without parsing English scope itself.
-SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope.ids}"
+# pre-check can query the same lists without parsing English scope itself,
+# and where the pre-check keeps its fingerprint of the queue. Both are keyed
+# by the scope: two loops over different scopes must not overwrite each
+# other's (they would each see a foreign scope, fail open, and quietly lose
+# the pre-check entirely). claude-tasks-check.sh derives the same key.
+SCOPE_KEY="$(printf '%s' "$SCOPE" | sha256sum | cut -c1-12)"
+SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope-$SCOPE_KEY.ids}"
+STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue-$SCOPE_KEY.state}"
 export CLAUDE_TASKS_SCOPE="$SCOPE" CLAUDE_TASKS_SCOPE_FILE="$SCOPE_FILE"
+export CLAUDE_TASKS_STATE_FILE="$STATE_FILE" CLAUDE_TASKS_LOCK="$LOCK"
 
 PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED. Scope-ids file (per the skill's Loop mode section): once you have resolved the scope to project ids, write $SCOPE_FILE with the exact scope string \"$SCOPE\" on the first line and one project id per line after it, overwriting whatever is there."
 
@@ -131,6 +138,10 @@ fire() {
   if ! flock -n 9; then
     echo "$(date -Is) another firing is still running; skipped" | tee -a "$LOGDIR/skipped.log"
     exec 9>&-
+    # This firing never happened, so whatever the pre-check fingerprinted on
+    # its way here was never acted on. Drop the fingerprint rather than let a
+    # change the lock swallowed get recorded as handled.
+    rm -f "$STATE_FILE"
     return 0
   fi
   echo "$(date -Is) firing from $ROOT -> $log"

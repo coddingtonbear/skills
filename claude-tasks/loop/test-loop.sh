@@ -65,7 +65,8 @@ LOGDIR="$XDG_STATE_HOME/claude-tasks-loop"
 
 # The firing is what resolves the English scope to project ids, so the prompt
 # has to tell it where to record them for the pre-check to read.
-grep -q "$LOGDIR/scope.ids" "$CAPTURED_PROMPT" || fail "prompt does not name the scope-ids file"
+SCOPE_KEY="$(printf '%s' "the test group" | sha256sum | cut -c1-12)"
+grep -q "$LOGDIR/scope-$SCOPE_KEY.ids" "$CAPTURED_PROMPT" || fail "prompt does not name the per-scope scope-ids file"
 grep -q 'first line' "$CAPTURED_PROMPT" || fail "prompt does not say what to write into the scope-ids file"
 
 # --- pre-check ------------------------------------------------------------
@@ -115,5 +116,21 @@ unset CLAUDE_TASKS_PRECHECK
 rm -f "$CAPTURED_PROMPT"
 "$HERE/claude-tasks-loop.sh" "the test group" --once >/dev/null 2>&1
 [ -f "$CAPTURED_PROMPT" ] || fail "--once should fire regardless of the pre-check"
+
+# --- overlap ---------------------------------------------------------------
+# A firing turned away by the lock never happened, so anything the pre-check
+# fingerprinted on its way in must not survive as "handled" -- otherwise a
+# change swallowed by the lock is lost for good.
+STATE_FILE="$LOGDIR/queue-$SCOPE_KEY.state"
+echo "a-fingerprint-for-a-change-nobody-acted-on" > "$STATE_FILE"
+
+exec 8>"$XDG_RUNTIME_DIR/claude-tasks-loop.lock"
+flock -n 8 || fail "could not take the test lock"
+stub_check 0
+loop_briefly
+exec 8>&-
+
+if [ -f "$CAPTURED_PROMPT" ]; then fail "fired while another firing held the lock"; fi
+if [ -f "$STATE_FILE" ]; then fail "kept the pre-check fingerprint after the lock turned the firing away"; fi
 
 echo "PASS"

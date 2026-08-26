@@ -38,6 +38,8 @@ export CLAUDE_TASKS_SCOPE="the test group"
 export CLAUDE_TASKS_SCOPE_FILE="$TMPROOT/scope.ids"
 export CLAUDE_TASKS_STATE_FILE="$TMPROOT/queue.state"
 export CLAUDE_TASKS_API_BASE="https://stub.invalid/open/v1"
+# Never let the tests touch (or be blocked by) a real loop's lockfile.
+export CLAUDE_TASKS_LOCK="$TMPROOT/loop.lock"
 
 PASS=0
 fail() { echo "FAIL: $1"; exit 1; }
@@ -145,6 +147,44 @@ expect 10 "recovers and skips once the API is healthy again"
   [ "$?" = 0 ] || exit 1 ) || fail "should fire when no TICKTICK_API_TOKEN is available"
 PASS=$((PASS + 1))
 echo "  ok: fires when no TICKTICK_API_TOKEN is available"
+
+echo
+echo "overlap with a running firing:"
+: > "$CLAUDE_TASKS_LOCK"
+
+# A change nobody has acted on yet.
+fixture "t1 0 claude,claude-waiting 2026-08-26T17:00:00.000+0000"
+BEFORE_STATE="$(cat "$CLAUDE_TASKS_STATE_FILE" 2>/dev/null || true)"
+
+# Hold the lock the way a firing does, and check from "another loop".
+exec 7>"$CLAUDE_TASKS_LOCK"
+flock -n 7 || fail "could not take the test lock"
+expect 10 "skips while another firing holds the lock"
+# The important half: it must not have fingerprinted the change as handled,
+# or the firing that never ran would be silently written off.
+[ "$(cat "$CLAUDE_TASKS_STATE_FILE" 2>/dev/null || true)" = "$BEFORE_STATE" ] \
+  || fail "recorded a fingerprint for a change it skipped over -- that change would be lost"
+PASS=$((PASS + 1))
+echo "  ok: records nothing while the lock is held"
+exec 7>&-
+
+expect 0 "fires once the lock is free again"
+
+rm -f "$CLAUDE_TASKS_LOCK"
+expect 10 "treats a missing lockfile as nobody firing"
+
+echo
+echo "per-scope state:"
+# Two loops over different scopes must not share files, or each sees the
+# other's scope, fails open, and quietly loses the pre-check for good.
+unset CLAUDE_TASKS_SCOPE_FILE CLAUDE_TASKS_STATE_FILE
+KEY_OF() { CLAUDE_TASKS_SCOPE="$1" bash -c 'printf "%s" "$CLAUDE_TASKS_SCOPE" | sha256sum | cut -c1-12'; }
+[ "$(KEY_OF "the work group")" != "$(KEY_OF "the life group")" ] \
+  || fail "two different scopes derive the same state-file key"
+[ "$(KEY_OF "the work group")" = "$(KEY_OF "the work group")" ] \
+  || fail "the same scope derives an unstable state-file key"
+PASS=$((PASS + 1))
+echo "  ok: state paths are keyed by scope"
 
 echo
 echo "PASS ($PASS assertions)"
