@@ -18,6 +18,14 @@
 # context accumulates across firings: all state lives in TickTick and the
 # vault, and each run re-surveys the queue from scratch.
 #
+# Run log: one Obsidian note per LAUNCH of this script (not per firing), in
+# the vault's claude-loops/ folder. Its path and this launch's actual start
+# time (from `date`) are passed to every firing in the prompt; the skill's
+# Loop mode section has the first firing create it and each firing that
+# works a task append a brief, timestamped line, so the whole launch's
+# activity reads as one list. The note lives in the vault, not on disk here
+# — only the firing (via its Obsidian MCP tools) can write it.
+#
 # Overlap protection: a non-blocking flock on a lockfile. If another firing
 # is still running (this loop's, or a second copy of the script), the new
 # firing is skipped and logged rather than run alongside it.
@@ -40,7 +48,11 @@ if [[ "$SCOPE" =~ ^[0-9]+[smhd]?$ ]]; then
   echo "usage: $(basename "$0") <scope> [min max | --once]" >&2
   exit 2
 fi
-PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker."
+mkdir -p "$LOGDIR"
+LAUNCH_STARTED="$(date -Is)"
+RUN_NOTE="claude-loops/$(date +%Y-%m-%dT%H-%M-%S).md"
+
+PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
@@ -100,8 +112,6 @@ if [ "${1:-}" = "--once" ]; then ONCE=1; shift; fi
 MIN_WAIT=$(to_seconds "${1:-5m}")
 MAX_WAIT=$(to_seconds "${2:-30m}")
 
-mkdir -p "$LOGDIR"
-
 fire() {
   local log="$LOGDIR/$(date +%Y-%m-%dT%H-%M-%S).log"
   exec 9>"$LOCK"
@@ -123,7 +133,7 @@ fire() {
   ) || echo "$(date -Is) claude exited non-zero" | tee -a "$log"
   echo "$(date -Is) done" | tee -a "$log"
   exec 9>&-   # release the lock between firings
-  # keep the last 200 logs
+  # keep the last 200 session logs
   ls -1t "$LOGDIR"/*.log 2>/dev/null | tail -n +201 | xargs -r rm -f
 
   # Outcome marker, read back from the log (works for plain and stream-json output).
@@ -136,6 +146,8 @@ fire() {
     echo "$(date -Is) warning: no CLAUDE_TASKS_RESULT marker in output; treating as idle" | tee -a "$log"
   fi
 }
+
+echo "$(date -Is) run note: $RUN_NOTE (vault, started $LAUNCH_STARTED)"
 
 trap 'echo; echo "loop stopped"; exit 0' INT TERM
 
