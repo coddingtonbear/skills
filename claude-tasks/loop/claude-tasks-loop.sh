@@ -32,7 +32,15 @@ if [ -z "$SCOPE" ]; then
   echo "usage: $(basename "$0") <scope> [min max | --once]   e.g. 'the work group'" >&2
   exit 2
 fi
-PROMPT="Let's get started on your claude tasks in $SCOPE."
+# A duration in the scope slot ("5m 30m" with no scope) would produce the
+# prompt "...your claude tasks in 5m", which Claude reads as "in five minutes"
+# and answers with a timer instead of working the queue.
+if [[ "$SCOPE" =~ ^[0-9]+[smhd]?$ ]]; then
+  echo "error: scope '$SCOPE' looks like a duration; the first argument is the TickTick scope, e.g. 'the work group'" >&2
+  echo "usage: $(basename "$0") <scope> [min max | --once]" >&2
+  exit 2
+fi
+PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
