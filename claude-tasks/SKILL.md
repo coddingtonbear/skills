@@ -83,7 +83,7 @@ Global mode is only reliable when the checkouts are inside the session's working
 
 **`claude-plan-required` present:** Investigate thoroughly (read code, reproduce, probe), form a recommended approach, write it into the task note's `# Outline and Plan` (options considered, recommendation, what would change, risks), and hand it back via a `Needs decision` ask subtask linking to the plan. Do not implement — no branch, no PR — until the user releases the task with `claude-ready`. If the investigation produced durable findings, log them before stopping.
 
-**`claude-plan-required` absent (default):** Autonomy through to a pull request — implement, write or update tests (per global standards: solid types, test coverage), verify the suite passes, commit on a feature branch, push, open a PR. This standing grant covers pushing the branch and opening the PR; it does not cover merging, releases, or anything else outward-facing.
+**`claude-plan-required` absent (default):** Autonomy through to a pull request — implement, write or update tests (per global standards: solid types, test coverage), verify the suite passes, commit on a feature branch, push, open a PR. This standing grant covers pushing the branch and opening the PR (with Claude's authorship stated in the commits and PR body); it does not cover merging, releases, replying to anyone, or anything else outward-facing — see the *speaking as a person* gate.
 
 **Standing gates — these always go to Waiting first, in either mode.** Autonomy is bounded by a fixed list of things the user has said they want a say in, regardless of tags:
 
@@ -93,7 +93,8 @@ Global mode is only reliable when the checkouts are inside the session's working
 - choosing between materially different architectures or approaches when more than one is plausible and the task body doesn't pick;
 - expanding scope beyond what the task describes, or dropping part of it;
 - the task's premise turning out wrong (bug can't reproduce, the approach in the body won't work) — log the findings, then ask; never silently pivot to a different solution than the one described;
-- anything touching an area the user has flagged (in the task, the project note, or CLAUDE.md) as sensitive.
+- anything touching an area the user has flagged (in the task, the project note, or CLAUDE.md) as sensitive;
+- **speaking as a person.** Anything that, once posted or sent, would read as written by the user — or by any human — is shown to the user first, unless the task explicitly says otherwise: comments and replies on issues, PRs, or discussions (especially to other people), emails and messages, reviews, release notes, posts, published site or documentation copy, anything going to a third party. Draft it in full, put the exact text in a `Needs review` ask subtask, and send it only after the user completes that subtask (or edits the draft in its body — the body's final text is what gets sent). Silence is not approval: while the ask is open, nothing goes out. The one standing exception is the default PR grant above — commit messages and the PR description on the user's own repos are pre-approved, and they say plainly that Claude wrote them (`Co-Authored-By: Claude`, "Generated with Claude Code") so nobody mistakes them for the user's voice.
 
 Hitting a gate mid-task is not a failure; it's the loop working. Finish everything that doesn't depend on the answer, then hand off.
 
