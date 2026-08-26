@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# Cheap pre-check for claude-tasks-loop.sh: decide whether a firing could
+# possibly have anything to do, without spending a single token.
+#
+#   claude-tasks-check.sh          # exit 0 = fire, exit 10 = skip this firing
+#
+# It does NOT reimplement the skill's rules for what counts as a candidate.
+# It answers a deliberately coarser question -- "could anything possibly have
+# changed?" -- and is wrong only in the safe direction. The asymmetry is the
+# whole design:
+#
+#   * saying "skip" when there IS work loses a task (real harm), so every
+#     uncertainty -- no token, no scope, an HTTP error, an unparseable
+#     response -- exits 0 and fires;
+#   * saying "fire" when there is nothing costs exactly one ordinary firing,
+#     which is what happened on every tick before this script existed.
+#
+# So the pre-check can only ever REMOVE firings from the existing schedule,
+# never add them, and the skill text stays the only place the real candidate
+# rules live -- there is nothing here to drift out of sync with it.
+#
+# Fires when any of these hold:
+#   1. it cannot tell (see above)
+#   2. an open task in scope carries `claude-ready` (released work nobody has
+#      picked up) or `claude-inflight` (a firing that did not finish cleanly;
+#      normal firings leave neither tag behind)
+#   3. the fingerprint of the claude-tagged open tasks in scope differs from
+#      the one recorded at the previous check -- which covers a completed ask
+#      subtask (completed tasks drop out of the API response entirely), a new
+#      comment, a body edit, a retag, and a newly added task
+#
+# Scope comes from the file the firings write (see CLAUDE_TASKS_SCOPE_FILE);
+# until one exists, every tick fires, exactly as it did before.
+#
+# Environment:
+#   TICKTICK_API_TOKEN        TickTick Open API token; sourced from
+#                             CLAUDE_TASKS_SECRETS when not already set
+#   CLAUDE_TASKS_SECRETS      shell-sourceable secrets file (default ~/.secrets)
+#   CLAUDE_TASKS_SCOPE        the scope string this loop was launched with
+#   CLAUDE_TASKS_SCOPE_FILE   resolved project ids (line 1: the scope string
+#                             they were resolved from; then one id per line)
+#   CLAUDE_TASKS_STATE_FILE   where the queue fingerprint is kept
+#   CLAUDE_TASKS_API_BASE     API base (default TickTick's; overridden by tests)
+set -uo pipefail
+
+LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop"
+API="${CLAUDE_TASKS_API_BASE:-https://api.ticktick.com/open/v1}"
+SECRETS="${CLAUDE_TASKS_SECRETS:-$HOME/.secrets}"
+SCOPE="${CLAUDE_TASKS_SCOPE:-}"
+SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope.ids}"
+STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue.state}"
+
+say()  { echo "$(date -Is) precheck: $1" >&2; }
+fire() { say "$1 -> firing"; exit 0; }
+skip() { say "$1 -> skipping (no tokens spent)"; exit 10; }
+
+command -v curl    >/dev/null 2>&1 || fire "curl not found"
+command -v python3 >/dev/null 2>&1 || fire "python3 not found"
+
+if [ -z "${TICKTICK_API_TOKEN:-}" ] && [ -r "$SECRETS" ]; then
+  set -a; . "$SECRETS" >/dev/null 2>&1 || true; set +a
+fi
+[ -n "${TICKTICK_API_TOKEN:-}" ] || fire "no TICKTICK_API_TOKEN"
+
+[ -r "$SCOPE_FILE" ] || fire "no resolved scope yet ($SCOPE_FILE)"
+[ "$(head -n1 "$SCOPE_FILE")" = "$SCOPE" ] || fire "scope file was resolved from a different scope"
+IDS="$(tail -n +2 "$SCOPE_FILE" | grep -E '^[0-9a-fA-F]{16,32}$' || true)"
+[ -n "$IDS" ] || fire "scope file lists no project ids"
+
+# One line per claude-tagged OPEN task: id|status|,tag,tag,|modifiedTime.
+# Tags are comma-wrapped so a whole-tag match is a plain fixed-string grep.
+EXTRACT='
+import json, sys
+d = json.load(sys.stdin)
+for t in d.get("tasks") or []:
+    tags = sorted(str(x) for x in (t.get("tags") or []))
+    if not any(x.startswith("claude") for x in tags):
+        continue
+    print("%s|%s|,%s,|%s" % (t.get("id"), t.get("status"), ",".join(tags), t.get("modifiedTime")))
+'
+
+SNAP=""
+for pid in $IDS; do
+  RESP="$(curl -sS -m 30 -w $'\n%{http_code}' \
+            -H "Authorization: Bearer $TICKTICK_API_TOKEN" \
+            "$API/project/$pid/data" 2>/dev/null)" || fire "request failed for project $pid"
+  CODE="$(printf '%s' "$RESP" | tail -n1)"
+  [ "$CODE" = 200 ] || fire "HTTP $CODE for project $pid"
+  LINES="$(printf '%s' "$RESP" | sed '$d' | python3 -c "$EXTRACT")" || fire "unparseable response for project $pid"
+  [ -n "$LINES" ] && SNAP="$SNAP$LINES"$'\n'
+done
+
+# A released or stuck task is a standing positive: no stored state involved,
+# so a crashed firing that left `claude-inflight` behind gets retried instead
+# of being fingerprinted into silence.
+if printf '%s' "$SNAP" | grep -q ',claude-ready,'; then
+  fire "a claude-ready task is waiting"
+fi
+if printf '%s' "$SNAP" | grep -q ',claude-inflight,'; then
+  fire "a claude-inflight task is unfinished"
+fi
+
+NOW="$(printf '%s' "$SNAP" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+WAS="$(cat "$STATE_FILE" 2>/dev/null || true)"
+
+if [ "$NOW" = "$WAS" ]; then
+  skip "queue unchanged"
+fi
+
+# Record at check time, not after the firing: a change the user makes *during*
+# a firing must still be visible to the next check. The cost is that my own
+# writes during a firing show up as a change too, so a working round is
+# normally followed by one idle firing before things go quiet.
+mkdir -p "$(dirname "$STATE_FILE")"
+printf '%s\n' "$NOW" > "$STATE_FILE"
+fire "queue changed since the last check"

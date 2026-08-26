@@ -29,8 +29,16 @@
 # Overlap protection: a non-blocking flock on a lockfile. If another firing
 # is still running (this loop's, or a second copy of the script), the new
 # firing is skipped and logged rather than run alongside it.
+#
+# Pre-check: before each firing, claude-tasks-check.sh asks TickTick's API
+# directly -- no model, no tokens -- whether anything could possibly have
+# changed, and a tick with nothing to do is skipped outright. It fails open
+# (no token, no resolved scope, any API trouble => fire anyway), so it can
+# only remove firings from the schedule, never add them. Set
+# CLAUDE_TASKS_PRECHECK=0 to fire on every tick as before.
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${CLAUDE_TASKS_ROOT:-$HOME/Documents/Projects}"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop.lock"
 LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop"
@@ -52,7 +60,12 @@ mkdir -p "$LOGDIR"
 LAUNCH_STARTED="$(date -Is)"
 RUN_NOTE="claude-loops/$(date +%Y-%m-%dT%H-%M-%S).md"
 
-PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
+# Where a firing records the project ids it resolved $SCOPE to, so the
+# pre-check can query the same lists without parsing English scope itself.
+SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope.ids}"
+export CLAUDE_TASKS_SCOPE="$SCOPE" CLAUDE_TASKS_SCOPE_FILE="$SCOPE_FILE"
+
+PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED. Scope-ids file (per the skill's Loop mode section): once you have resolved the scope to project ids, write $SCOPE_FILE with the exact scope string \"$SCOPE\" on the first line and one project id per line after it, overwriting whatever is there."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
@@ -127,6 +140,7 @@ fire() {
       --permission-mode acceptEdits \
       --allowedTools "$ALLOWED_TOOLS" \
       --add-dir "$ROOT" \
+      --add-dir "$LOGDIR" \
       "${MODEL_ARGS[@]}" \
       "${OUTPUT_ARGS[@]}" \
       2>&1 | tee -a "$log" | { if [ "$VERBOSE" = 1 ]; then feed; else cat; fi; }
@@ -156,15 +170,32 @@ if [ "$ONCE" = 1 ]; then
   exit 0
 fi
 
+CHECK="${CLAUDE_TASKS_CHECK:-$HERE/claude-tasks-check.sh}"
+PRECHECK="${CLAUDE_TASKS_PRECHECK:-1}"
+
+# Exit 10 -- and only exit 10 -- means "nothing could have changed, skip".
+# Every other status, including a crash in the checker itself, fires.
+should_skip() {
+  [ "$PRECHECK" = 1 ] || return 1
+  [ -x "$CHECK" ] || return 1
+  "$CHECK"; [ "$?" -eq 10 ]
+}
+
 WAIT=$MIN_WAIT
 while true; do
   LAST_RESULT=unknown
-  fire
-  if [ "$LAST_RESULT" = worked ]; then
-    WAIT=$MIN_WAIT
+  if should_skip; then
+    LAST_RESULT=skipped
   else
-    WAIT=$(( WAIT * 2 )); [ "$WAIT" -gt "$MAX_WAIT" ] && WAIT=$MAX_WAIT
+    fire
   fi
-  echo "$(date -Is) last run: $LAST_RESULT; next firing in $((WAIT/60))m$((WAIT%60))s (Ctrl-C to stop)"
+  case "$LAST_RESULT" in
+    # A skipped tick costs nothing, so it earns no backoff: stay at MIN and
+    # keep watching cheaply. Backoff exists to stop idle *firings* burning
+    # tokens, and still does when the pre-check is off or failing open.
+    worked|skipped) WAIT=$MIN_WAIT ;;
+    *) WAIT=$(( WAIT * 2 )); [ "$WAIT" -gt "$MAX_WAIT" ] && WAIT=$MAX_WAIT ;;
+  esac
+  echo "$(date -Is) last run: $LAST_RESULT; next check in $((WAIT/60))m$((WAIT%60))s (Ctrl-C to stop)"
   sleep "$WAIT"
 done
