@@ -256,20 +256,22 @@ All vault access goes through `mcp__obsidian__*` tools per the **dev-log** skill
 
 **When blocked or the premise fails:** a `Needs unblock` or `Needs decision` ask subtask as appropriate, swap to `claude-waiting`, report. Never leave a task `claude-inflight` at the end of a turn unless I'm genuinely mid-work and about to continue.
 
-## Task titles: the `#` hazard
+## Task titles and content: the `#` hazard
 
-TickTick parses `#word` in a **task title** as a tag reference, and creates the tag if it doesn't already exist. So a title like `Fix flaky test from #482` or `#1 priority: rotate the API key` silently invents a `482` or `1` tag and pollutes the account's tag list — the stray `1` tag already in `list_tags` came from exactly this mistake.
+TickTick parses `#word` as a tag reference — in a **task title**, and, confirmed live 2026-08-26, in a `create_task` call's **`content`** too — and creates the tag if it doesn't already exist. So a title like `Fix flaky test from #482`, or body text mentioning `PR #4`, silently invents a `482` or `4` tag and pollutes the account's tag list — the stray `1`, `4`, and `word` tags already in `list_tags` all came from exactly this mistake, the last two from body text rather than a title.
 
-**Rule: a title I write contains no `#` character unless it is a deliberate reference to a tag that already exists.** This applies everywhere a title is set — `create_task`, `batch_add_tasks`, `update_task`.
+**Rule: no `#` character in a title, and no `#` character in `content` on a `create_task` call, unless it is a deliberate reference to a tag that already exists.** This applies everywhere a title or content is set — `create_task`, `batch_add_tasks`, `update_task`. Whether an `update_task` content change triggers the same parsing hasn't been confirmed either way; treat it the same as `create_task` until proven otherwise.
 
-Before any call that sets a title, scan the string for `#` and resolve each occurrence:
+Before any call that sets a title or content, scan the string for `#` and resolve each occurrence:
 
-- **Not meant as a tag** (the common case — PR/issue numbers, ordinals, ticket refs, channel names): rewrite it out. `#482` → `PR 482`; `#1 priority` → `top priority`; `owner/repo#5` → `owner/repo PR 5`. Don't reach for a near-miss like `PR #482` — the `#482` token still parses.
-- **Meant as a tag**: don't spell it in the title. Put the bare name in the `tags` array, and only after confirming it exists via `mcp__ticktick__list_tags`. Inventing tags is the user's call, not mine.
+- **Not meant as a tag** (the common case — PR/issue numbers, ordinals, ticket refs, channel names): rewrite it out. `#482` → `PR 482`; `#1 priority` → `top priority`; `owner/repo#5` → `owner/repo PR 5`. Don't reach for a near-miss like `PR #482` — the `#482` token still parses, wherever it appears.
+- **Meant as a tag**: don't spell it in the title or content. Put the bare name in the `tags` array, and only after confirming it exists via `mcp__ticktick__list_tags`. Inventing tags is the user's call, not mine.
 
-The `#` is only special in titles. Task bodies (`content`, markdown) and comments (plain text) are safe, so `#482` there is fine and is the right place for the full reference.
+Comments (plain text) are still safe — TickTick's tag parser hasn't been observed to touch them.
 
-If the user dictates a title containing a `#` token, apply the rewrite and mention it in the report; keep it verbatim only if they say the tag is what they want. If a stray tag does get created, say so — there's no tag-delete tool, so the user has to clean it up by hand.
+If a `create_task` or `update_task` response comes back with tags beyond what was passed in `tags`, that's this hazard firing: re-issue the call with an explicit, corrected `tags` array immediately rather than leaving the stray tag in place.
+
+If the user dictates a title or body containing a `#` token, apply the rewrite and mention it in the report; keep it verbatim only if they say the tag is what they want. If a stray tag does get created, say so — there's no tag-delete tool, so the user has to clean it up by hand.
 
 ## Adding tasks to the queue
 
