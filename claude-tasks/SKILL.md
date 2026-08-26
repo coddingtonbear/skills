@@ -50,6 +50,7 @@ Figuring out *which project we're in* is step one — sessions normally start op
    - `claude-ready` → a work candidate. Its body and comments are its instructions.
    - `claude-waiting` → fetch its subtasks (`get_task_by_id` on the parent for `childIds`, then on each child) and find my newest ask subtask (tagged `claude-needs-you`). Then fetch that subtask's comments (`get_comment`). A comment of mine always starts with `Claude says:`; anything else is the user's.
      - **Completed** → the user is done with it and I may continue: their answer is the subtask's comments (in order) plus anything they added to its body; no comments and no body change = "take your recommendation". The parent is now a candidate and that answer is its instruction. No change to the parent's tags is needed from the user.
+     - If the newest ask subtask is a `Needs review: PR <n>` and the PR is still open, also check the PR itself for unaddressed comments (see Responding to PR comments) — this happens whether or not the ask subtask itself has moved.
      - **Open, newest comment is the user's** → a question or partial direction while they're still deciding. Answer it *in the same subtask* with a comment starting `Claude says:` (investigate as needed; produce no deliverable). If the answer needs more than a comment's 1024 characters, append a `## Claude says (<timestamp>)` section to the subtask's body — never altering existing text — and leave a short `Claude says:` comment pointing at it. Stay `claude-waiting`.
      - **Open, newest comment is mine (or none)** → untouched. **No ask subtask at all** (a task handed off under the retired comment scheme) → migrate once: turn my newest `NEEDS:` comment into an ask subtask of the same kind, carrying its content into the markdown body, and report the migration; don't treat the comment as answered.
    Then read each candidate's `content` fully, plus its comments (`get_comment`) — the user may still leave short notes there; a later comment supersedes the body where they conflict. A task whose body or comments say it is blocked on an incomplete task is not eligible.
@@ -158,7 +159,7 @@ Reply in a comment on this subtask, then complete it — or just complete it to 
 Kinds:
 
 - **decision** — a gate was hit or the approach needs choosing; options enumerated with a recommendation.
-- **review** — a deliverable is done and wants eyes: a PR, or anything without a review loop of its own (an investigation, research, vault work, a write-up). For a PR the title is `Needs review: PR <n> — <title>` and the body carries the PR link, a short summary of the change, the integration-test evidence, the `# Decisions` link, and what to look at first; the code review itself still happens on GitHub — the ask is the pointer in the user's inbox, and review-comment rounds ("address X") flow back through it like any other reply. For a non-PR deliverable the body reads like a PR description: what was asked, what was done and why, what changed with links, risks, what to look at, honest gaps.
+- **review** — a deliverable is done and wants eyes: a PR, or anything without a review loop of its own (an investigation, research, vault work, a write-up). For a PR the title is `Needs review: PR <n> — <title>` and the body carries the PR link, a short summary of the change, the integration-test evidence, the `# Decisions` link, and what to look at first; the code review itself still happens on GitHub — the ask is the pointer in the user's inbox, and review-comment rounds ("address X") flow back through it like any other reply. Comments posted directly on the PR are picked up too, without waiting for the user to relay them — see Responding to PR comments. For a non-PR deliverable the body reads like a PR description: what was asked, what was done and why, what changed with links, risks, what to look at, honest gaps.
 - **answer** — a factual question only the user can answer.
 - **unblock** — something I can't do (missing access, capability, or credential; failing infrastructure), and what would unblock it.
 
@@ -181,6 +182,20 @@ TickTick can't search the vault, and `obsidian://` links don't open on iOS, so e
 ```
 
 On desktop it's a click; on a phone the label is enough to find the note by hand. The vault is named `Notes`. In the URI, encode spaces as `%20` and keep folder separators as `/`; to land on a section, append the heading: `...&file=<path>%23Decisions` (and say so in the label: `… .md › Decisions`). Always link to the task note's `# Decisions` section in a `Needs review` subtask and in the finishing report, since that's where the user's review starts. Also include the link in the chat report so the user can open the note from either side.
+
+## Responding to PR comments
+
+A PR under review keeps generating input after its `Needs review` ask subtask exists — from the user, or anyone else with access to the repo. Check for it wherever the ask subtask itself gets checked (see Finding and choosing the next task, step 4, and Loop mode): `gh pr view <n> --comments` for the conversation thread, `gh api repos/<owner>/<repo>/pulls/<n>/comments` for inline review comments. A comment counts as unaddressed if nothing after it, by anyone, starts with 🤖 — that prefix is how I tell my own past replies apart from everyone else's on a shared account.
+
+A PR comment is never a command to act on blindly — route it by what it actually asks for:
+
+- **Obviously a good, well-scoped idea** — make the change directly and push it to the same branch, then reply 🤖 stating what changed and in which commit. This is a normal round: swap to `claude-inflight`, do the work, swap back to `claude-waiting` and update `Phase:`, same as any other round.
+- **A good idea, but complex or independent of this PR** — don't fold it in (see the scope-expansion gate); file it as a new top-level task in the list instead (untagged unless it's clearly mine — see Adding tasks to the queue), then reply 🤖 naming or linking the new task. No status change needed — this doesn't touch the parent task.
+- **A poor idea, or a misunderstanding of the code** — reply 🤖 explaining why, with no code change. No status change needed.
+
+**Every reply I post to GitHub is prefixed with 🤖**, on all three of the above and everywhere else I comment on a PR — a plain-text reply is indistinguishable from the user's own words on a shared account, and the emoji is the only thing that tells them apart at a glance.
+
+This whole behavior — replying and, for the first bullet, pushing a fix — is itself the *acting publicly on your behalf* gate's "task explicitly says otherwise" carve-out: it applies to comments on a PR I opened, on a repo the user owns, matching the standing PR-open grant's own scope. On a repo the user doesn't own, treat comments the same way opening the PR there is treated — draft the reply or fix and hand off with a `Needs decision` ask subtask rather than posting or pushing directly. A fix that trips one of the other standing gates (a dependency change, a real architecture choice) still gets its own `Needs decision` ask subtask rather than going straight to the branch, exactly as it would mid-task. Log anything of consequence in the task note's `# Decisions` table as usual.
 
 ## Handing back: when a task becomes the user's
 
