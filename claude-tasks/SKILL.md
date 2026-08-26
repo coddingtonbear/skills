@@ -87,6 +87,8 @@ Entry, one line: `- [[<start date>]] <start time>–<end time> — [<task title>
 
 Get the TickTick task URL from `https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>`. Keep entries to one line each — this is an index for skimming a launch's activity, not a record; the detail lives on the task note's `# Decisions` and Development Logs (see Linking to vault notes), same as everywhere else. An `idle` firing writes nothing. If no run-note path was given in the prompt (e.g. running the skill's prompt by hand, outside the script), skip this step — it's a loop-script convenience, not a hard requirement of loop mode itself.
 
+**Scope-ids file.** The loop script also passes a path for recording what the scope resolved to: "Scope-ids file: ... write `<path>` with the exact scope string on the first line and one project id per line after it." Write it with `Write` (overwriting whatever is there) as soon as the survey has resolved the scope — on *every* firing, not just the first, so a renamed, added, or removed list is picked up, and on idle firings too, not only ones that work a task. It is what lets the script's pre-check (`loop/claude-tasks-check.sh`) ask TickTick directly whether anything could possibly have changed *before* spending a firing to find out; with no current file, every tick fires exactly as it did before. Nothing else in the lifecycle depends on it. If the prompt names no such path, skip this step.
+
 If there's no repo context (or its list has no Ready tasks), say so and ask which groups or lists to work (see Global mode) rather than silently going global. If no vault note matches the repo, ask where the project lives rather than guessing.
 
 ### Global mode: working across every project
