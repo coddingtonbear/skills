@@ -156,6 +156,8 @@ One paragraph: where the task stands and exactly what I'm asking for.
 Reply in a comment on this subtask, then complete it — or just complete it to take the recommendation. Questions first? Comment and leave it open; I'll answer here.
 ```
 
+**`update_task` needs `projectId` in every payload**, even a tags-only or content-only change — the schema doesn't mark it required, but omitting it has reliably failed outright (`Expecting value: line 1 column 1 (char 0)`) rather than just misbehaving. Always include it.
+
 Kinds:
 
 - **decision** — a gate was hit or the approach needs choosing; options enumerated with a recommendation.
