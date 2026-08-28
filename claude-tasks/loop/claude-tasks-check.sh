@@ -15,9 +15,13 @@
 #   * saying "fire" when there is nothing costs exactly one ordinary firing,
 #     which is what happened on every tick before this script existed.
 #
-# So the pre-check can only ever REMOVE firings from the existing schedule,
-# never add them, and the skill text stays the only place the real candidate
-# rules live -- there is nothing here to drift out of sync with it.
+# The skill text stays the only place the real candidate rules live -- there
+# is nothing here to drift out of sync with it. The pre-check watches two
+# things the firings treat as answers from the user: the TickTick queue, and
+# the GitHub pull requests that queue is waiting on (the skill lets the user
+# answer a `Needs review: PR <n>` ask by approving or merging on GitHub, which
+# touches nothing in TickTick, so the queue fingerprint alone would sleep
+# through it).
 #
 # Fires when any of these hold:
 #   1. it cannot tell (see above)
@@ -28,6 +32,15 @@
 #      the one recorded at the previous check -- which covers a completed ask
 #      subtask (completed tasks drop out of the API response entirely), a new
 #      comment, a body edit, a retag, and a newly added task
+#   4. a pull request a `claude-waiting` task points at has changed since the
+#      previous check -- a review, a comment, a push, a merge or close. The PRs
+#      come from the `github.com/<owner>/<repo>/pull/<n>` URLs in those tasks'
+#      bodies (the skill's `Phase: ... delivered -- PR <url>` line), which the
+#      same TickTick response already carries, so discovery costs nothing; each
+#      PR is then one `gh api` call, and its `updated_at` is folded into the
+#      same fingerprint. Deliberately coarse: my own pushes and replies bump
+#      it too, costing one idle firing, the same price my TickTick writes
+#      already pay.
 #
 # Scope comes from the file the firings write (see CLAUDE_TASKS_SCOPE_FILE);
 # until one exists, every tick fires, exactly as it did before.
@@ -35,6 +48,10 @@
 # Environment:
 #   TICKTICK_API_TOKEN        TickTick Open API token; sourced from
 #                             CLAUDE_TASKS_SECRETS when not already set
+#   gh                        the GitHub CLI, logged in with read access to
+#                             the watched repos (the user's own login is fine:
+#                             the pre-check only reads); missing or failing
+#                             => fire, like every other uncertainty
 #   CLAUDE_TASKS_SECRETS      shell-sourceable secrets file (default ~/.secrets)
 #   CLAUDE_TASKS_SCOPE        the scope string this loop was launched with
 #   CLAUDE_TASKS_SCOPE_FILE   resolved project ids (line 1: the scope string
@@ -87,17 +104,24 @@ IDS="$(tail -n +2 "$SCOPE_FILE" | grep -E '^[0-9a-fA-F]{16,32}$' || true)"
 
 # One line per claude-tagged OPEN task: id|status|,tag,tag,|modifiedTime.
 # Tags are comma-wrapped so a whole-tag match is a plain fixed-string grep.
+# Plus one `pr|<owner>/<repo>/<n>` line per pull request URL found in the
+# body of a `claude-waiting` task -- the PRs the queue is waiting on.
 EXTRACT='
-import json, sys
+import json, re, sys
 d = json.load(sys.stdin)
+PR = re.compile(r"https?://github\.com/([\w.-]+)/([\w.-]+)/pull/(\d+)")
 for t in d.get("tasks") or []:
     tags = sorted(str(x) for x in (t.get("tags") or []))
     if not any(x.startswith("claude") for x in tags):
         continue
     print("%s|%s|,%s,|%s" % (t.get("id"), t.get("status"), ",".join(tags), t.get("modifiedTime")))
+    if "claude-waiting" in tags:
+        for o, r, n in sorted(set(PR.findall(t.get("content") or ""))):
+            print("pr|%s/%s/%s" % (o, r, n))
 '
 
 SNAP=""
+PRS=""
 for pid in $IDS; do
   RESP="$(curl -sS -m 30 -w $'\n%{http_code}' \
             -H "Authorization: Bearer $TICKTICK_API_TOKEN" \
@@ -105,7 +129,10 @@ for pid in $IDS; do
   CODE="$(printf '%s' "$RESP" | tail -n1)"
   [ "$CODE" = 200 ] || fire "HTTP $CODE for project $pid"
   LINES="$(printf '%s' "$RESP" | sed '$d' | python3 -c "$EXTRACT")" || fire "unparseable response for project $pid"
-  [ -n "$LINES" ] && SNAP="$SNAP$LINES"$'\n'
+  TASKS="$(printf '%s' "$LINES" | grep -v '^pr|' || true)"
+  FOUND="$(printf '%s' "$LINES" | grep '^pr|' | cut -d'|' -f2 || true)"
+  [ -n "$TASKS" ] && SNAP="$SNAP$TASKS"$'\n'
+  [ -n "$FOUND" ] && PRS="$PRS$FOUND"$'\n'
 done
 
 # A released or stuck task is a standing positive: no stored state involved,
@@ -117,6 +144,24 @@ fi
 if printf '%s' "$SNAP" | grep -q ',claude-inflight,'; then
   fire "a claude-inflight task is unfinished"
 fi
+
+# The pull requests the queue is waiting on. One `gh api` call each; what
+# matters is that *anything* about the PR moved since the last check, and
+# `updated_at` covers reviews, comments, pushes, merges and closes alike.
+# Read straight from the JSON rather than via --jq so an unexpected shape
+# fails loudly (and fires) instead of hashing an empty string.
+PR_LINE='
+import json, sys
+p = json.load(sys.stdin)
+print("pr|%s|%s|%s|%s" % (p["updated_at"], p["state"], p.get("merged"), p["head"]["sha"]))
+'
+for ref in $(printf '%s' "$PRS" | LC_ALL=C sort -u); do
+  command -v gh >/dev/null 2>&1 || fire "gh not found, and the queue is waiting on PR $ref"
+  o="${ref%%/*}"; rest="${ref#*/}"; r="${rest%%/*}"; n="${rest#*/}"
+  BODY="$(gh api "repos/$o/$r/pulls/$n" 2>/dev/null)" || fire "gh api failed for PR $ref"
+  LINE="$(printf '%s' "$BODY" | python3 -c "$PR_LINE" 2>/dev/null)" || fire "unparseable response for PR $ref"
+  SNAP="$SNAP$ref|$LINE"$'\n'
+done
 
 NOW="$(printf '%s' "$SNAP" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
 WAS="$(cat "$STATE_FILE" 2>/dev/null || true)"
@@ -131,4 +176,4 @@ fi
 # normally followed by one idle firing before things go quiet.
 mkdir -p "$(dirname "$STATE_FILE")"
 printf '%s\n' "$NOW" > "$STATE_FILE"
-fire "queue changed since the last check"
+fire "queue or a watched PR changed since the last check"
