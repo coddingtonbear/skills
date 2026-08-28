@@ -29,6 +29,19 @@ if [ -f "\$body" ]; then cat "\$body"; else echo '{"tasks":[]}'; fi
 printf '\n%s' "\$code"
 EOF
 chmod +x "$STUBDIR/curl"
+
+# Stub gh: `gh api repos/<o>/<r>/pulls/<n>` serves $FIXDIR/pr-<o>-<r>-<n>.json
+# and exits with $FIXDIR/pr-<o>-<r>-<n>.code (default 0). Every call is
+# appended to $FIXDIR/gh.calls so tests can assert that no call was made.
+cat > "$STUBDIR/gh" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$FIXDIR/gh.calls"
+key="\$(printf '%s' "\$2" | sed -E 's#^repos/([^/]+)/([^/]+)/pulls/([0-9]+)\$#pr-\\1-\\2-\\3#')"
+[ -f "$FIXDIR/\$key.code" ] && exit "\$(cat "$FIXDIR/\$key.code")"
+[ -f "$FIXDIR/\$key.json" ] && cat "$FIXDIR/\$key.json" && exit 0
+echo '{"message":"Not Found"}' >&2; exit 1
+EOF
+chmod +x "$STUBDIR/gh"
 export PATH="$STUBDIR:$PATH"
 
 PID=6a8f04098f086ae6e27e1e74
@@ -60,10 +73,11 @@ import json, sys
 out, rows = sys.argv[1], sys.argv[2:]
 tasks = []
 for r in rows:
-    tid, status, tags, mtime = r.split()
+    tid, status, tags, mtime, *content = r.split(None, 4)
     tasks.append({"id": tid, "status": int(status),
                   "tags": tags.split(",") if tags != "-" else [],
-                  "modifiedTime": mtime, "title": "irrelevant"})
+                  "modifiedTime": mtime, "title": "irrelevant",
+                  "content": content[0] if content else ""})
 json.dump({"project": {"id": "p"}, "tasks": tasks, "columns": []}, open(out, "w"))
 PY
 }
@@ -129,6 +143,74 @@ expect 10 "ignores the user's own untagged tasks in a shared list"
 fixture "t1 0 claude,claude-waiting 2026-08-26T14:00:00.000+0000" \
         "u1 0 errands 2026-08-26T16:00:00.000+0000"
 expect 10 "ignores edits to the user's own tasks in a shared list"
+
+echo
+echo "watched pull requests:"
+# Writes $FIXDIR/pr-<o>-<r>-<n>.json the way `gh api repos/o/r/pulls/n` would.
+pr_fixture() {
+  python3 - "$FIXDIR/pr-$1.json" "$2" "$3" "$4" <<'PY'
+import json, sys
+out, updated, state, sha = sys.argv[1:]
+json.dump({"updated_at": updated, "state": state, "merged": state == "merged",
+           "head": {"sha": sha}}, open(out, "w"))
+PY
+}
+PRTASK="t1 0 claude,claude-waiting 2026-08-26T18:00:00.000+0000 Phase: 1/1 — delivered — PR https://github.com/acme/widgets/pull/42"
+rm -f "$FIXDIR/gh.calls"
+fixture "$PRTASK"
+pr_fixture acme-widgets-42 2026-08-26T18:00:00Z open aaa111
+expect 0 "fires on first sight of a task waiting on a PR"
+grep -q 'repos/acme/widgets/pulls/42' "$FIXDIR/gh.calls" || fail "did not look up the PR named in the waiting task's body"
+expect 10 "skips while the PR is untouched"
+
+# The case the queue fingerprint alone sleeps through: an approval (or any
+# review, comment, push or merge) changes nothing in TickTick, but it bumps
+# the PR's updated_at.
+pr_fixture acme-widgets-42 2026-08-26T18:30:00Z open aaa111
+expect 0 "fires when the PR is updated (a review posted) with TickTick unchanged"
+expect 10 "settles back to skipping"
+
+pr_fixture acme-widgets-42 2026-08-26T18:45:00Z merged aaa111
+expect 0 "fires when the PR is merged"
+expect 10 "settles back to skipping"
+
+rm -f "$FIXDIR/gh.calls"
+fixture "t1 0 claude,claude-waiting 2026-08-26T18:00:00.000+0000 Phase: 1/1 — delivered — a write-up, nothing on GitHub"
+expect 0 "fires on the body change"
+[ ! -e "$FIXDIR/gh.calls" ] || fail "called gh for a waiting task with no PR URL"
+PASS=$((PASS + 1))
+echo "  ok: makes no gh call when nothing is waiting on a PR"
+
+rm -f "$FIXDIR/gh.calls"
+fixture "t1 0 claude,claude-inflight 2026-08-26T18:00:00.000+0000 Phase: 1/2 — working — see https://github.com/acme/widgets/pull/42"
+expect 0 "fires on claude-inflight as before"
+[ ! -e "$FIXDIR/gh.calls" ] || fail "called gh for a PR named by a task that is not waiting"
+PASS=$((PASS + 1))
+echo "  ok: only claude-waiting tasks' PRs are watched"
+
+fixture "$PRTASK"
+pr_fixture acme-widgets-42 2026-08-26T18:45:00Z merged aaa111
+expect 0 "fires on the return to waiting"
+expect 10 "settles back to skipping"
+echo 1 > "$FIXDIR/pr-acme-widgets-42.code"
+expect 0 "fires when gh fails for a watched PR"
+rm -f "$FIXDIR/pr-acme-widgets-42.code"
+echo 'not json' > "$FIXDIR/pr-acme-widgets-42.json"
+expect 0 "fires when the PR response cannot be parsed"
+pr_fixture acme-widgets-42 2026-08-26T18:45:00Z merged aaa111
+expect 10 "recovers and skips once gh is healthy again"
+
+# No gh at all: a PATH with everything the checker needs except gh.
+NOGH="$TMPROOT/nogh"; mkdir -p "$NOGH"
+for t in bash env curl python3 sed grep cut sort sha256sum tail head date mkdir cat flock; do
+  p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$NOGH/$t"
+done
+( PATH="$NOGH" "$CHECK" >/dev/null 2>&1; [ "$?" = 0 ] ) \
+  || fail "should fire when gh is not installed and a PR is being waited on"
+PASS=$((PASS + 1))
+echo "  ok: fires when gh is not installed and a PR is being waited on"
+fixture "t1 0 claude,claude-waiting 2026-08-26T14:00:00.000+0000"
+expect 0 "fires on the change back to a plain waiting task"
 
 echo
 echo "fails open:"

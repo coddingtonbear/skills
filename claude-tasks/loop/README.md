@@ -26,9 +26,11 @@ answers a deliberately coarser question and is wrong only in the safe
 direction: saying "skip" when there is work would lose a task, so every
 uncertainty — no token, no resolved scope, an HTTP error, an unparseable
 response — fires anyway. Saying "fire" when there is nothing costs exactly one
-ordinary firing, which is what every tick cost before. **The pre-check can only
-remove firings from the schedule, never add them**, and there is nothing in it
-to drift out of sync with the skill text.
+ordinary firing, which is what every tick cost before. There is nothing in it
+to drift out of sync with the skill text: it watches the two places the skill
+treats as answers from you — the TickTick queue, and the GitHub pull requests
+that queue is waiting on — and leaves deciding what an answer *means* to the
+firing.
 
 It fires when any of these hold:
 
@@ -42,7 +44,21 @@ It fires when any of these hold:
   its parent's `modifiedTime` — so a timestamp watermark alone would miss the
   single most important event), a new comment, a body edit, a retag, and a
   newly added task. Tasks without a `claude*` tag are ignored, so the user's
-  own tasks in a shared list never trigger a firing.
+  own tasks in a shared list never trigger a firing;
+- a pull request a `claude-waiting` task points at has changed — a review
+  (the skill lets you answer a `Needs review: PR <n>` ask by approving or
+  merging on GitHub, which touches nothing in TickTick), a comment, a push, a
+  merge or close. The PRs to watch come from the `github.com/…/pull/<n>` URLs
+  in those tasks' bodies — the `Phase: … delivered — PR <url>` line the skill
+  writes — which the same TickTick response already carries, so discovery is
+  free. Each PR is one `gh api repos/<o>/<r>/pulls/<n>` call, and its
+  `updated_at` goes into the same fingerprint. This is deliberately coarse:
+  Claude's own pushes and replies bump it too, at the price of one idle
+  firing, exactly as its own TickTick writes already do. It needs `gh` logged
+  in with read access to the repos (your own login is fine — the pre-check
+  only reads); `gh` missing or failing fires, like every other uncertainty,
+  so a lapsed token shows up as extra firings rather than as approvals
+  silently sitting unnoticed.
 
 It needs `TICKTICK_API_TOKEN` (read from the environment, or sourced from
 `~/.secrets` — override with `CLAUDE_TASKS_SECRETS`) and the **scope-ids file**
