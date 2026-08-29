@@ -85,7 +85,7 @@ The user runs this skill on a recurring schedule — normally `claude-tasks/loop
 
 Entry, one line: `- [[<start date>]] <start time>–<end time> — [<task title>](<ticktick task URL>) — <what happened, one sentence>. Decision: <one sentence, if any major decision was made — omit otherwise>. Note: [<vault path>](<obsidian URI>) (if a task note exists)`. Get the start time from the task's `Phase:` line (set at first pickup from `date`, per Multi-phase tasks); get the end time with a fresh `date` call right before writing the entry. If the task spanned midnight, link both dates: `[[<start date>]] <start time>–[[<end date>]] <end time>`.
 
-Get the TickTick task URL from `https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>`. Keep entries to one line each — this is an index for skimming a launch's activity, not a record; the detail lives on the task note's `# Decisions` and Development Logs (see Linking to vault notes), same as everywhere else. An `idle` firing writes nothing. If no run-note path was given in the prompt (e.g. running the skill's prompt by hand, outside the script), skip this step — it's a loop-script convenience, not a hard requirement of loop mode itself.
+Build the TickTick task URL per Linking to TickTick tasks. Keep entries to one line each — this is an index for skimming a launch's activity, not a record; the detail lives on the task note's `# Decisions` and Development Logs (see Linking to vault notes), same as everywhere else. An `idle` firing writes nothing. If no run-note path was given in the prompt (e.g. running the skill's prompt by hand, outside the script), skip this step — it's a loop-script convenience, not a hard requirement of loop mode itself.
 
 **Scope-ids file.** The loop script also passes a path for recording what the scope resolved to: "Scope-ids file: ... write `<path>` with the exact scope string on the first line and one project id per line after it." Write it with `Write` (overwriting whatever is there) as soon as the survey has resolved the scope — on *every* firing, not just the first, so a renamed, added, or removed list is picked up, and on idle firings too, not only ones that work a task. It is what lets the script's pre-check (`loop/claude-tasks-check.sh`) ask TickTick directly whether anything could possibly have changed *before* spending a firing to find out; with no current file, every tick fires exactly as it did before. Nothing else in the lifecycle depends on it. If the prompt names no such path, skip this step.
 
@@ -186,6 +186,16 @@ TickTick can't search the vault, and `obsidian://` links don't open on iOS, so e
 ```
 
 On desktop it's a click; on a phone the label is enough to find the note by hand. The vault is named `Notes`. In the URI, encode spaces as `%20` and keep folder separators as `/`; to land on a section, append the heading: `...&file=<path>%23Decisions` (and say so in the label: `… .md › Decisions`). Always link to the task note's `# Decisions` section in a `Needs review` subtask and in the finishing report, since that's where the user's review starts. Also include the link in the chat report so the user can open the note from either side.
+
+### Linking to TickTick tasks
+
+Any link to a TickTick task, anywhere — PR descriptions, vault notes and dev-log entries, ask-subtask bodies, follow-up tasks, loop run notes, chat reports — is built from the task's `projectId` and `id` (both come back from `get_task_by_id` / `search_task`; the MCP server returns no link field) as:
+
+```
+https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>
+```
+
+Note the `#` after `webapp/`. Never write `https://ticktick.com/webapp/-/p/…` or any other shape — that form is TickTick's shared-list URL, and it does not open a task.
 
 ## Responding to PR comments
 
@@ -306,6 +316,6 @@ The user will often ask me to capture work into TickTick (follow-ups discovered 
 - **List**: the current project's list; Inbox only if no list fits.
 - **Priority**: none — leave it unset unless the user says otherwise.
 - **Body**: detailed. Outline the work already performed: what was investigated, what was found (with file/function references), why it matters, and any recommended direction. Reference the relevant dev-log entry by note title and timestamp when one exists. A future reader (me, months later, with no context) should be able to start from the body alone.
-- **Not a subtask** of the current work task — subtasks under a work task are reserved for ask subtasks. Follow-ups are top-level tasks that link the originating task by URL (`https://ticktick.com/webapp/#p/<projectId>/tasks/<taskId>`) in the body.
+- **Not a subtask** of the current work task — subtasks under a work task are reserved for ask subtasks. Follow-ups are top-level tasks that link the originating task by URL (see Linking to TickTick tasks) in the body.
 - **Tags**: add `claude` when the task is clearly something I could take on; otherwise leave untagged (and then it's the user's task — see the hard boundary). Never add `claude-ready`, `claude-plan-required`, or `claude-handoff` — releasing a task, requiring a plan, and taking a task back are the user's decisions.
 - Use `batch_add_tasks` when capturing several at once.
