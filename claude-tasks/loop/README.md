@@ -71,6 +71,17 @@ project id per line after it. Until a firing has written one, every tick fires
 exactly as before. `CLAUDE_TASKS_PRECHECK=0` disables the pre-check entirely;
 `--once` ignores it, since that's an explicit "run now".
 
+**It says what changed.** A "changed" verdict is followed by the snapshot
+lines that differ — `was:` for how a task or PR looked at the previous check,
+`now:` for how it looks now; a line with only a `was:` vanished (a completed
+ask subtask), one with only a `now:` is new. The lines are the raw
+fingerprint rows: `id|status|,tags,|modifiedTime` for a task,
+`owner/repo/n|pr|updated_at|state|merged|head-sha` for a PR. Every decision,
+with those lines, is also appended to `$LOGDIR/precheck.log` (next to the
+per-scope `queue-<key>.state` hash and `queue-<key>.snap` snapshot it
+compares against), so a run of unexpected firings can be read back after the
+terminal has scrolled.
+
 **It cooperates with the overlap lock.** A tick whose firing the `flock` would
 turn away is skipped at the pre-check instead, before any API call — otherwise
 the check would fingerprint a change, the firing would be refused the lock, and

@@ -66,6 +66,18 @@ expect() {
   echo "  ok: $why"
 }
 
+# Like expect, but also asserts that the checker's stderr contains a pattern
+# (what it said about the change), so the terminal line is testable.
+expect_says() {
+  local want="$1" pattern="$2" why="$3" got err
+  err="$("$CHECK" 2>&1 >/dev/null)"; got=$?
+  [ "$got" = "$want" ] || fail "$why (wanted exit $want, got $got)"
+  printf '%s\n' "$err" | grep -qE -- "$pattern" \
+    || fail "$why (stderr lacks '$pattern'; got: $(printf '%s' "$err" | tr '\n' ' '))"
+  PASS=$((PASS + 1))
+  echo "  ok: $why"
+}
+
 # Writes $FIXDIR/<pid>.json from lines of "id status tag[,tag] modifiedTime".
 fixture() {
   python3 - "$FIXDIR/$PID.json" "$@" <<'PY'
@@ -100,19 +112,30 @@ expect 0 "fires the first time, with no recorded fingerprint"
 expect 10 "skips when nothing has changed since the last check"
 
 fixture "t1 0 claude,claude-waiting 2026-08-26T11:00:00.000+0000"
-expect 0 "fires when a task's modifiedTime moves (a comment or body edit)"
+expect_says 0 'was: t1\|0\|,claude,claude-waiting,\|2026-08-26T10:00:00' \
+  "fires when a task's modifiedTime moves (a comment or body edit), and says what it was"
+expect 10 "settles back to skipping"
+fixture "t1 0 claude,claude-waiting 2026-08-26T11:30:00.000+0000"
+expect_says 0 'now: t1\|0\|,claude,claude-waiting,\|2026-08-26T11:30:00' \
+  "says what the task looks like now"
+grep -q 'now: t1|0|,claude,claude-waiting,|2026-08-26T11:30:00' "$TMPROOT/precheck.log" \
+  || fail "the change was not appended to precheck.log"
+grep -q 'queue unchanged' "$TMPROOT/precheck.log" \
+  || fail "skip decisions are not appended to precheck.log"
+PASS=$((PASS + 1))
+echo "  ok: decisions and changes land in precheck.log"
 expect 10 "settles back to skipping"
 
-fixture "t1 0 claude,claude-waiting 2026-08-26T11:00:00.000+0000" \
+fixture "t1 0 claude,claude-waiting 2026-08-26T11:30:00.000+0000" \
         "t2 0 claude-needs-you 2026-08-26T11:05:00.000+0000"
-expect 0 "fires when a task appears (a new ask subtask or task)"
+expect_says 0 'now: t2\|' "fires when a task appears (a new ask subtask or task), naming it"
 expect 10 "settles back to skipping"
 
 # The case a modifiedTime watermark would have missed: completing an ask
 # subtask drops it from the API response entirely, and does NOT bump its
 # parent's modifiedTime. A set fingerprint catches the disappearance.
-fixture "t1 0 claude,claude-waiting 2026-08-26T11:00:00.000+0000"
-expect 0 "fires when a task disappears (an ask subtask the user completed)"
+fixture "t1 0 claude,claude-waiting 2026-08-26T11:30:00.000+0000"
+expect_says 0 'was: t2\|' "fires when a task disappears (an ask subtask the user completed), naming it"
 expect 10 "settles back to skipping"
 
 echo
@@ -128,7 +151,7 @@ expect 0 "keeps firing while a claude-inflight task is unfinished"
 # Firing on a standing positive deliberately does not record a fingerprint,
 # so a queue that returns to a state already fired on stays quiet rather than
 # firing a second time for the same state.
-fixture "t1 0 claude,claude-waiting 2026-08-26T11:00:00.000+0000"
+fixture "t1 0 claude,claude-waiting 2026-08-26T11:30:00.000+0000"
 expect 10 "does not re-fire on a state it has already fired on"
 
 echo

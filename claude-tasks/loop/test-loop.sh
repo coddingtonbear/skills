@@ -122,7 +122,9 @@ rm -f "$CAPTURED_PROMPT"
 # fingerprinted on its way in must not survive as "handled" -- otherwise a
 # change swallowed by the lock is lost for good.
 STATE_FILE="$LOGDIR/queue-$SCOPE_KEY.state"
+SNAP_FILE="$LOGDIR/queue-$SCOPE_KEY.snap"
 echo "a-fingerprint-for-a-change-nobody-acted-on" > "$STATE_FILE"
+echo "t1|0|,claude,|2026-08-26T10:00:00.000+0000" > "$SNAP_FILE"
 
 exec 8>"$XDG_RUNTIME_DIR/claude-tasks-loop.lock"
 flock -n 8 || fail "could not take the test lock"
@@ -132,5 +134,6 @@ exec 8>&-
 
 if [ -f "$CAPTURED_PROMPT" ]; then fail "fired while another firing held the lock"; fi
 if [ -f "$STATE_FILE" ]; then fail "kept the pre-check fingerprint after the lock turned the firing away"; fi
+if [ -f "$SNAP_FILE" ]; then fail "kept the pre-check snapshot after the lock turned the firing away"; fi
 
 echo "PASS"

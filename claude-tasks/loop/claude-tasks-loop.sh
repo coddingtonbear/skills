@@ -141,7 +141,7 @@ fire() {
     # This firing never happened, so whatever the pre-check fingerprinted on
     # its way here was never acted on. Drop the fingerprint rather than let a
     # change the lock swallowed get recorded as handled.
-    rm -f "$STATE_FILE"
+    rm -f "$STATE_FILE" "${STATE_FILE%.state}.snap"
     return 0
   fi
   echo "$(date -Is) firing from $ROOT -> $log"

@@ -58,7 +58,11 @@
 #                             they were resolved from; then one id per line);
 #                             defaults to a per-scope path under $LOGDIR
 #   CLAUDE_TASKS_STATE_FILE   where the queue fingerprint is kept; likewise
-#                             per-scope, so two loops don't share one
+#                             per-scope, so two loops don't share one. The
+#                             snapshot the fingerprint was taken of lives
+#                             beside it (`.snap` for `.state`), and every
+#                             decision is appended to precheck.log in the
+#                             same directory
 #   CLAUDE_TASKS_LOCK         the loop's lockfile; a tick is skipped outright
 #                             while another firing holds it
 #   CLAUDE_TASKS_API_BASE     API base (default TickTick's; overridden by tests)
@@ -74,8 +78,17 @@ LOCK="${CLAUDE_TASKS_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop.lock}"
 SCOPE_KEY="$(printf '%s' "$SCOPE" | sha256sum | cut -c1-12)"
 SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope-$SCOPE_KEY.ids}"
 STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue-$SCOPE_KEY.state}"
+# The sorted snapshot behind the fingerprint, kept so a "changed" verdict can
+# say *what* changed instead of only that the hash moved.
+SNAP_FILE="${STATE_FILE%.state}.snap"
+# Every decision, and the change it saw, also lands here: the loop only shows
+# this script's stderr on the terminal, which scrolls away.
+PRECHECK_LOG="$(dirname "$STATE_FILE")/precheck.log"
 
-say()  { echo "$(date -Is) precheck: $1" >&2; }
+say()  {
+  echo "$(date -Is) precheck: $1" >&2
+  { mkdir -p "$(dirname "$PRECHECK_LOG")" && echo "$(date -Is) $1" >> "$PRECHECK_LOG"; } 2>/dev/null || true
+}
 fire() { say "$1 -> firing"; exit 0; }
 skip() { say "$1 -> skipping (no tokens spent)"; exit 10; }
 
@@ -163,11 +176,27 @@ for ref in $(printf '%s' "$PRS" | LC_ALL=C sort -u); do
   SNAP="$SNAP$ref|$LINE"$'\n'
 done
 
-NOW="$(printf '%s' "$SNAP" | LC_ALL=C sort | sha256sum | cut -d' ' -f1)"
+SORTED="$(printf '%s' "$SNAP" | LC_ALL=C sort)"
+NOW="$(printf '%s' "$SORTED" | sha256sum | cut -d' ' -f1)"
 WAS="$(cat "$STATE_FILE" 2>/dev/null || true)"
 
 if [ "$NOW" = "$WAS" ]; then
   skip "queue unchanged"
+fi
+
+# Say what moved, line by line, before firing. Task lines read
+# id|status|,tags,|modifiedTime; PR lines read owner/repo/n|pr|updated_at|
+# state|merged|head sha. A line only under "was" vanished (a completed ask
+# subtask); only under "now" is new; a pair is an edit, comment, retag, or
+# PR activity.
+if [ -r "$SNAP_FILE" ]; then
+  say "changed since the last check:"
+  diff <(cat "$SNAP_FILE") <(printf '%s\n' "$SORTED") \
+    | sed -n 's/^< /  was: /p; s/^> /  now: /p' >&2
+  diff <(cat "$SNAP_FILE") <(printf '%s\n' "$SORTED") \
+    | sed -n 's/^< /  was: /p; s/^> /  now: /p' >> "$PRECHECK_LOG" 2>/dev/null || true
+else
+  say "no snapshot from a previous check to compare against"
 fi
 
 # Record at check time, not after the firing: a change the user makes *during*
@@ -176,4 +205,5 @@ fi
 # normally followed by one idle firing before things go quiet.
 mkdir -p "$(dirname "$STATE_FILE")"
 printf '%s\n' "$NOW" > "$STATE_FILE"
+printf '%s\n' "$SORTED" > "$SNAP_FILE"
 fire "queue or a watched PR changed since the last check"
