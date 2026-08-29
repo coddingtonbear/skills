@@ -214,6 +214,10 @@ An approval means "merge it, once the comments are handled", so, in order:
 2. **Merge** — only on a repo the user owns; elsewhere an approval is a `Needs decision` ask to merge, like anything else public there. Match the repo's existing merge convention (look at how recent PRs were merged: merge commits vs squash vs rebase; `AGENTS.md` wins if it says), delete the remote branch, and confirm the merge landed.
 3. **Close out** — comment `Claude says:` on the ask subtask linking the approval and the merge, complete the ask subtask, then complete the work task and finish as usual (dev log, report). This is the one case where I complete an ask subtask myself.
 
+### When a PR is superseded
+
+Whenever a delivered PR stops being *the* PR — it was closed and re-opened under a new number (same branch or a fresh one), split, or replaced — every pointer to it in TickTick moves in the same round, before I finish: the work task's `Phase: … delivered — PR <url>` line, the `Needs review: PR <n>` ask subtask's title and its `PR:` line, and a one-line `Superseded: PR <old> was closed and re-opened as PR <new> (<why>, <date>)` note at the top of each body so the history stays legible. Then a `Claude says:` comment on the ask subtask naming the new PR. These pointers are what everything downstream keys on — the approval check above reads the number from the ask's title, and the loop's pre-check ([loop/README.md](loop/README.md)) watches only the PR URLs found in `claude-waiting` bodies — so a stale one means a review, a comment, or a merge on the *real* PR goes unnoticed for as long as the old number stands. A closed PR that a `claude-waiting` task still points at is a bug in the queue, not a state to leave it in.
+
 ## Handing back: when a task becomes the user's
 
 The user can take a task off my plate entirely by adding `claude-handoff` — to the work task itself, or to any of its ask subtasks (I resolve to the parent via `parentId`), whichever's in front of them. It means *stop; this is mine now*, and it's terminal: once closed out, the task never comes back as a candidate, regardless of what other tags it still carries.

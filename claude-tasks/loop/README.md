@@ -51,7 +51,11 @@ It fires when any of these hold:
   merge or close. The PRs to watch come from the `github.com/…/pull/<n>` URLs
   in those tasks' bodies — the `Phase: … delivered — PR <url>` line the skill
   writes — which the same TickTick response already carries, so discovery is
-  free. Each PR is one `gh api repos/<o>/<r>/pulls/<n>` call, and its
+  free — which also means a stale pointer is a blind spot: if a PR is closed
+  and re-opened under a new number, the skill must move the task's pointers
+  to the new one (its *When a PR is superseded* section), or the pre-check
+  keeps watching the dead PR and sleeps through everything on the live one.
+  Each PR is one `gh api repos/<o>/<r>/pulls/<n>` call, and its
   `updated_at` goes into the same fingerprint. This is deliberately coarse:
   Claude's own pushes and replies bump it too, at the price of one idle
   firing, exactly as its own TickTick writes already do. It needs `gh` logged
