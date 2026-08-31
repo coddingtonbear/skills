@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # The claude-tasks loop, run as a normal foreground command:
 #
-#   claude-tasks-loop.sh <scope>            # adaptive: 5m after a run that did
+#   claude-tasks-loop.sh                    # adaptive: 5m after a run that did
 #                                           # work, doubling while idle, cap 30m
-#   claude-tasks-loop.sh <scope> 2m 1h      # custom min / max (sleep(1) syntax)
-#   claude-tasks-loop.sh <scope> --once     # a single firing, then exit
+#   claude-tasks-loop.sh 2m 1h              # custom min / max (sleep(1) syntax)
+#   claude-tasks-loop.sh --once             # a single firing, then exit
 #
-# <scope> names the TickTick project groups and/or lists to work, as the
-# skill's prompt expects it: "the work group", "life and open-source",
-# "the icloud-md list". It is required — a headless run cannot ask.
+# There is no scope argument: the queue is every project shared with Claude's
+# own Todoist account (Coddingtonbot), and every task in them assigned to it.
+# The user scopes the loop by sharing and unsharing projects.
 #
 # Pacing: each firing's report ends with "CLAUDE_TASKS_RESULT: worked|idle"
 # (the claude-tasks skill emits it in loop mode). "worked" resets the wait to
 # MIN; "idle" doubles it up to MAX; a missing marker counts as idle and warns.
 #
 # Every firing is a FRESH headless Claude Code session (`claude -p`), so no
-# context accumulates across firings: all state lives in TickTick and the
+# context accumulates across firings: all state lives in Todoist and the
 # vault, and each run re-surveys the queue from scratch.
 #
 # Run log: one Obsidian note per LAUNCH of this script (not per firing), in
@@ -30,46 +30,24 @@
 # is still running (this loop's, or a second copy of the script), the new
 # firing is skipped and logged rather than run alongside it.
 #
-# Pre-check: before each firing, claude-tasks-check.sh asks TickTick's API
+# Pre-check: before each firing, claude-tasks-check.sh asks Todoist's API
 # directly -- no model, no tokens -- whether anything could possibly have
 # changed, and a tick with nothing to do is skipped outright. It fails open
-# (no token, no resolved scope, any API trouble => fire anyway), so it can
-# only remove firings from the schedule, never add them. Set
-# CLAUDE_TASKS_PRECHECK=0 to fire on every tick as before.
+# (no token, any API trouble => fire anyway), so it can only remove firings
+# from the schedule, never add them. Set CLAUDE_TASKS_PRECHECK=0 to fire on
+# every tick as before.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${CLAUDE_TASKS_ROOT:-$HOME/Documents/Projects}"
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop.lock"
 LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop"
-SCOPE="${CLAUDE_TASKS_SCOPE:-}"
-if [ $# -gt 0 ] && [ "$1" != "--once" ]; then SCOPE="$1"; shift; fi
-if [ -z "$SCOPE" ]; then
-  echo "usage: $(basename "$0") <scope> [min max | --once]   e.g. 'the work group'" >&2
-  exit 2
-fi
-# A duration in the scope slot ("5m 30m" with no scope) would produce the
-# prompt "...your claude tasks in 5m", which Claude reads as "in five minutes"
-# and answers with a timer instead of working the queue.
-if [[ "$SCOPE" =~ ^[0-9]+[smhd]?$ ]]; then
-  echo "error: scope '$SCOPE' looks like a duration; the first argument is the TickTick scope, e.g. 'the work group'" >&2
-  echo "usage: $(basename "$0") <scope> [min max | --once]" >&2
-  exit 2
-fi
+BOT_USER="${CLAUDE_TASKS_BOT_USER:-me+claude@adamcoddington.net}"
 mkdir -p "$LOGDIR"
 LAUNCH_STARTED="$(date -Is)"
 RUN_NOTE="claude-loops/$(date +%Y-%m-%dT%H-%M-%S).md"
 
-# Where a firing records the project ids it resolved $SCOPE to, so the
-# pre-check can query the same lists without parsing English scope itself,
-# and where the pre-check keeps its fingerprint of the queue. Both are keyed
-# by the scope: two loops over different scopes must not overwrite each
-# other's (they would each see a foreign scope, fail open, and quietly lose
-# the pre-check entirely). claude-tasks-check.sh derives the same key.
-SCOPE_KEY="$(printf '%s' "$SCOPE" | sha256sum | cut -c1-12)"
-SCOPE_FILE="${CLAUDE_TASKS_SCOPE_FILE:-$LOGDIR/scope-$SCOPE_KEY.ids}"
-STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue-$SCOPE_KEY.state}"
-export CLAUDE_TASKS_SCOPE="$SCOPE" CLAUDE_TASKS_SCOPE_FILE="$SCOPE_FILE"
+STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue.state}"
 export CLAUDE_TASKS_STATE_FILE="$STATE_FILE" CLAUDE_TASKS_LOCK="$LOCK"
 
 # Secrets: read ONCE at launch, not once per tick. ~/.secrets can be
@@ -78,25 +56,31 @@ export CLAUDE_TASKS_STATE_FILE="$STATE_FILE" CLAUDE_TASKS_LOCK="$LOCK"
 # every few minutes. Reading here costs one grant per launch, while the
 # operator is still at the terminal; exporting the token means
 # claude-tasks-check.sh's own sourcing branch (guarded on the variable being
-# unset) never opens the file again. Only TICKTICK_API_TOKEN is taken: the
-# firings' MCP servers carry their own credentials, and exporting the whole
-# file would put every secret into each headless session's environment.
+# unset) never opens the file again. Only TODOIST_CLAUDE_API_TOKEN — the
+# Coddingtonbot account's token, which the pre-check queries with — is taken:
+# the firings' `td` CLI carries its own credentials (the system credential
+# manager), and exporting the whole file would put every secret into each
+# headless session's environment. If the secrets file doesn't carry it, fall
+# back to the td credential store itself.
 SECRETS="${CLAUDE_TASKS_SECRETS:-$HOME/.secrets}"
-if [ -z "${TICKTICK_API_TOKEN:-}" ] && [ -r "$SECRETS" ]; then
-  echo "$(date -Is) reading TICKTICK_API_TOKEN from $SECRETS (a grant prompt may appear; granting now covers the whole launch)"
-  TICKTICK_API_TOKEN="$(set +eu; . "$SECRETS" >/dev/null 2>&1; printf '%s' "${TICKTICK_API_TOKEN:-}")"
+if [ -z "${TODOIST_CLAUDE_API_TOKEN:-}" ] && [ -r "$SECRETS" ]; then
+  echo "$(date -Is) reading TODOIST_CLAUDE_API_TOKEN from $SECRETS (a grant prompt may appear; granting now covers the whole launch)"
+  TODOIST_CLAUDE_API_TOKEN="$(set +eu; . "$SECRETS" >/dev/null 2>&1; printf '%s' "${TODOIST_CLAUDE_API_TOKEN:-}")"
 fi
-if [ -n "${TICKTICK_API_TOKEN:-}" ]; then
-  export TICKTICK_API_TOKEN
+if [ -z "${TODOIST_CLAUDE_API_TOKEN:-}" ] && command -v td >/dev/null 2>&1; then
+  TODOIST_CLAUDE_API_TOKEN="$(td --user "$BOT_USER" auth token view 2>/dev/null | grep -oE '[0-9a-f]{40}' | head -1 || true)"
+fi
+if [ -n "${TODOIST_CLAUDE_API_TOKEN:-}" ]; then
+  export TODOIST_CLAUDE_API_TOKEN
 else
-  echo "$(date -Is) no TICKTICK_API_TOKEN available; the pre-check will fail open and fire every tick" >&2
+  echo "$(date -Is) no TODOIST_CLAUDE_API_TOKEN available; the pre-check will fail open and fire every tick" >&2
 fi
 
-PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED. Scope-ids file (per the skill's Loop mode section): once you have resolved the scope to project ids, write $SCOPE_FILE with the exact scope string \"$SCOPE\" on the first line and one project id per line after it, overwriting whatever is there."
+PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Your queue is every project shared with your Todoist account ($BOT_USER) and every task in them assigned to you — accept pending invitations first, then survey and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
-ALLOWED_TOOLS="${CLAUDE_TASKS_ALLOWED_TOOLS:-mcp__ticktick__*,mcp__obsidian__*,Read,Edit,Write,Glob,Grep,Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(date:*),Bash(ls:*)}"
+ALLOWED_TOOLS="${CLAUDE_TASKS_ALLOWED_TOOLS:-mcp__obsidian__*,Read,Edit,Write,Glob,Grep,Bash(td:*),Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(date:*),Bash(ls:*),Bash(curl:*)}"
 
 # Model for headless firings: an alias (opus, sonnet, haiku) or a full model id.
 # Unset = the session default from ~/.claude/settings.json / ANTHROPIC_MODEL.
@@ -223,7 +207,7 @@ while true; do
   case "$LAST_RESULT" in
     # A skipped tick costs nothing, so it earns no backoff: stay at MIN and
     # keep watching cheaply. Backoff exists to stop idle *firings* burning
-    # tokens, and still does when the pre-check is off or failing open.
+    # tokens, and still does whenever the pre-check is off or failing open.
     worked|skipped) WAIT=$MIN_WAIT ;;
     *) WAIT=$(( WAIT * 2 )); [ "$WAIT" -gt "$MAX_WAIT" ] && WAIT=$MAX_WAIT ;;
   esac

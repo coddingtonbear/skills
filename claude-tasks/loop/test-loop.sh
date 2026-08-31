@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test for claude-tasks-loop.sh's run-note plumbing, using a stub
-# `claude` CLI so no real API calls or TickTick/Obsidian access happen.
+# `claude` CLI so no real API calls or Todoist/Obsidian access happen.
 #
 # The script itself can't write the run note (it lives in the vault, and only
 # a firing's Obsidian MCP tools can reach it) -- this test only checks that
@@ -38,15 +38,20 @@ while [ \$# -gt 0 ]; do
   esac
 done
 printf '%s' "\$prompt" > "$CAPTURED_PROMPT"
-printf '%s' "\${TICKTICK_API_TOKEN:-}" > "$TMPROOT/captured-token.txt"
+printf '%s' "\${TODOIST_CLAUDE_API_TOKEN:-}" > "$TMPROOT/captured-token.txt"
 echo "stub claude ran"
 echo "CLAUDE_TASKS_RESULT: worked"
 EOF
 chmod +x "$STUBDIR/claude"
+# Stub td: the loop falls back to the td credential store for the bot token
+# when the secrets file doesn't carry it; the tests must never touch the real
+# credential manager, so the stub just fails.
+printf '#!/usr/bin/env bash\nexit 1\n' > "$STUBDIR/td"
+chmod +x "$STUBDIR/td"
 export PATH="$STUBDIR:$PATH"
 
 BEFORE="$(date -Is)"
-"$HERE/claude-tasks-loop.sh" "the test group" --once
+"$HERE/claude-tasks-loop.sh" --once
 AFTER="$(date -Is)"
 
 fail() { echo "FAIL: $1"; exit 1; }
@@ -63,15 +68,19 @@ LAUNCH_STARTED="$(grep -oE 'started at [^.]+' "$CAPTURED_PROMPT" | sed 's/starte
 [[ "$LAUNCH_STARTED" > "$BEFORE" || "$LAUNCH_STARTED" == "$BEFORE" ]] || fail "launch timestamp $LAUNCH_STARTED predates the test run"
 [[ "$LAUNCH_STARTED" < "$AFTER" || "$LAUNCH_STARTED" == "$AFTER" ]] || fail "launch timestamp $LAUNCH_STARTED is after the test run"
 
+# The queue is membership-scoped now: the prompt must say so and must not
+# name any scope or scope-ids file.
+grep -q 'every project shared with your Todoist account' "$CAPTURED_PROMPT" \
+  || fail "prompt does not describe the membership-scoped queue"
+grep -q 'accept pending invitations' "$CAPTURED_PROMPT" \
+  || fail "prompt does not tell the firing to accept pending invitations"
+if grep -q 'Scope-ids file' "$CAPTURED_PROMPT"; then
+  fail "prompt still names a scope-ids file -- that plumbing was removed"
+fi
+
 LOGDIR="$XDG_STATE_HOME/claude-tasks-loop"
 [ -n "$(ls "$LOGDIR"/*.log 2>/dev/null || true)" ] || fail "expected a session .log under $LOGDIR"
 [ -z "$(ls "$LOGDIR"/run-*.md 2>/dev/null || true)" ] || fail "found a local run-*.md -- run notes now live in the vault, not $LOGDIR"
-
-# The firing is what resolves the English scope to project ids, so the prompt
-# has to tell it where to record them for the pre-check to read.
-SCOPE_KEY="$(printf '%s' "the test group" | sha256sum | cut -c1-12)"
-grep -q "$LOGDIR/scope-$SCOPE_KEY.ids" "$CAPTURED_PROMPT" || fail "prompt does not name the per-scope scope-ids file"
-grep -q 'first line' "$CAPTURED_PROMPT" || fail "prompt does not say what to write into the scope-ids file"
 
 # --- pre-check ------------------------------------------------------------
 # A stub pre-check stands in for claude-tasks-check.sh so this test covers the
@@ -85,7 +94,7 @@ stub_check() { printf '#!/usr/bin/env bash\nexit %s\n' "$1" > "$CHECKSTUB"; chmo
 # leaves $CAPTURED_PROMPT behind; a skipped tick leaves nothing.
 loop_briefly() {
   rm -f "$CAPTURED_PROMPT"
-  "$HERE/claude-tasks-loop.sh" "the test group" 1s 1s >/dev/null 2>&1 &
+  "$HERE/claude-tasks-loop.sh" 1s 1s >/dev/null 2>&1 &
   local pid=$!
   sleep 3
   kill -TERM "$pid" 2>/dev/null || true
@@ -118,17 +127,17 @@ unset CLAUDE_TASKS_PRECHECK
 
 # --once is an explicit "run now", so it never consults the pre-check.
 rm -f "$CAPTURED_PROMPT"
-"$HERE/claude-tasks-loop.sh" "the test group" --once >/dev/null 2>&1
+"$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1
 [ -f "$CAPTURED_PROMPT" ] || fail "--once should fire regardless of the pre-check"
 
 # --- overlap ---------------------------------------------------------------
 # A firing turned away by the lock never happened, so anything the pre-check
 # fingerprinted on its way in must not survive as "handled" -- otherwise a
 # change swallowed by the lock is lost for good.
-STATE_FILE="$LOGDIR/queue-$SCOPE_KEY.state"
-SNAP_FILE="$LOGDIR/queue-$SCOPE_KEY.snap"
+STATE_FILE="$LOGDIR/queue.state"
+SNAP_FILE="$LOGDIR/queue.snap"
 echo "a-fingerprint-for-a-change-nobody-acted-on" > "$STATE_FILE"
-echo "t1|0|,claude,|2026-08-26T10:00:00.000+0000" > "$SNAP_FILE"
+echo "t1|botuid|2026-08-26T10:00:00Z|0|,," > "$SNAP_FILE"
 
 exec 8>"$XDG_RUNTIME_DIR/claude-tasks-loop.lock"
 flock -n 8 || fail "could not take the test lock"
@@ -141,21 +150,21 @@ if [ -f "$STATE_FILE" ]; then fail "kept the pre-check fingerprint after the loc
 if [ -f "$SNAP_FILE" ]; then fail "kept the pre-check snapshot after the lock turned the firing away"; fi
 
 # --- secrets at launch ------------------------------------------------------
-# The loop sources the secrets file ONCE at launch and exports the token, so
-# a grant-gated file is opened exactly once per launch and the per-tick
+# The loop sources the secrets file ONCE at launch and exports the bot token,
+# so a grant-gated file is opened exactly once per launch and the per-tick
 # pre-check (and every firing) inherits it from the environment.
-echo 'TICKTICK_API_TOKEN=tok-read-at-launch' > "$TMPROOT/secrets.env"
+echo 'TODOIST_CLAUDE_API_TOKEN=tok-read-at-launch' > "$TMPROOT/secrets.env"
 rm -f "$TMPROOT/captured-token.txt"
-env -u TICKTICK_API_TOKEN CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
-  "$HERE/claude-tasks-loop.sh" "the test group" --once >/dev/null 2>&1
+env -u TODOIST_CLAUDE_API_TOKEN CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
+  "$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1
 [ "$(cat "$TMPROOT/captured-token.txt" 2>/dev/null)" = "tok-read-at-launch" ] \
-  || fail "launch-time secrets read did not export TICKTICK_API_TOKEN to the firing"
+  || fail "launch-time secrets read did not export TODOIST_CLAUDE_API_TOKEN to the firing"
 
 # A token already in the environment wins; the file is not even consulted.
 rm -f "$TMPROOT/captured-token.txt"
-env TICKTICK_API_TOKEN=tok-from-env CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
-  "$HERE/claude-tasks-loop.sh" "the test group" --once >/dev/null 2>&1
+env TODOIST_CLAUDE_API_TOKEN=tok-from-env CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
+  "$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1
 [ "$(cat "$TMPROOT/captured-token.txt" 2>/dev/null)" = "tok-from-env" ] \
-  || fail "an environment-supplied TICKTICK_API_TOKEN should win over the secrets file"
+  || fail "an environment-supplied TODOIST_CLAUDE_API_TOKEN should win over the secrets file"
 
 echo "PASS"
