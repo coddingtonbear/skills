@@ -72,6 +72,26 @@ STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue-$SCOPE_KEY.state}"
 export CLAUDE_TASKS_SCOPE="$SCOPE" CLAUDE_TASKS_SCOPE_FILE="$SCOPE_FILE"
 export CLAUDE_TASKS_STATE_FILE="$STATE_FILE" CLAUDE_TASKS_LOCK="$LOCK"
 
+# Secrets: read ONCE at launch, not once per tick. ~/.secrets can be
+# grant-gated (a pipe whose every open asks the user to approve), and the
+# pre-check would otherwise source it itself on every tick — a grant prompt
+# every few minutes. Reading here costs one grant per launch, while the
+# operator is still at the terminal; exporting the token means
+# claude-tasks-check.sh's own sourcing branch (guarded on the variable being
+# unset) never opens the file again. Only TICKTICK_API_TOKEN is taken: the
+# firings' MCP servers carry their own credentials, and exporting the whole
+# file would put every secret into each headless session's environment.
+SECRETS="${CLAUDE_TASKS_SECRETS:-$HOME/.secrets}"
+if [ -z "${TICKTICK_API_TOKEN:-}" ] && [ -r "$SECRETS" ]; then
+  echo "$(date -Is) reading TICKTICK_API_TOKEN from $SECRETS (a grant prompt may appear; granting now covers the whole launch)"
+  TICKTICK_API_TOKEN="$(set +eu; . "$SECRETS" >/dev/null 2>&1; printf '%s' "${TICKTICK_API_TOKEN:-}")"
+fi
+if [ -n "${TICKTICK_API_TOKEN:-}" ]; then
+  export TICKTICK_API_TOKEN
+else
+  echo "$(date -Is) no TICKTICK_API_TOKEN available; the pre-check will fail open and fire every tick" >&2
+fi
+
 PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Scope — the TickTick groups/lists to work: $SCOPE. Survey the queue now and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED. Scope-ids file (per the skill's Loop mode section): once you have resolved the scope to project ids, write $SCOPE_FILE with the exact scope string \"$SCOPE\" on the first line and one project id per line after it, overwriting whatever is there."
 
 # Tools a headless run may use without prompting. Anything else is denied and

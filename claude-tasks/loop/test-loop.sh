@@ -18,6 +18,9 @@ trap 'rm -rf "$TMPROOT"' EXIT
 export XDG_STATE_HOME="$TMPROOT/state"
 export XDG_RUNTIME_DIR="$TMPROOT/run"
 export CLAUDE_TASKS_ROOT="$TMPROOT/projects"
+# Never let the test open the real ~/.secrets: on machines where that's a
+# grant-gated pipe, the loop's launch-time read would block on a prompt.
+export CLAUDE_TASKS_SECRETS="$TMPROOT/no-such-secrets"
 mkdir -p "$CLAUDE_TASKS_ROOT" "$XDG_RUNTIME_DIR"
 
 CAPTURED_PROMPT="$TMPROOT/captured-prompt.txt"
@@ -35,6 +38,7 @@ while [ \$# -gt 0 ]; do
   esac
 done
 printf '%s' "\$prompt" > "$CAPTURED_PROMPT"
+printf '%s' "\${TICKTICK_API_TOKEN:-}" > "$TMPROOT/captured-token.txt"
 echo "stub claude ran"
 echo "CLAUDE_TASKS_RESULT: worked"
 EOF
@@ -135,5 +139,23 @@ exec 8>&-
 if [ -f "$CAPTURED_PROMPT" ]; then fail "fired while another firing held the lock"; fi
 if [ -f "$STATE_FILE" ]; then fail "kept the pre-check fingerprint after the lock turned the firing away"; fi
 if [ -f "$SNAP_FILE" ]; then fail "kept the pre-check snapshot after the lock turned the firing away"; fi
+
+# --- secrets at launch ------------------------------------------------------
+# The loop sources the secrets file ONCE at launch and exports the token, so
+# a grant-gated file is opened exactly once per launch and the per-tick
+# pre-check (and every firing) inherits it from the environment.
+echo 'TICKTICK_API_TOKEN=tok-read-at-launch' > "$TMPROOT/secrets.env"
+rm -f "$TMPROOT/captured-token.txt"
+env -u TICKTICK_API_TOKEN CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
+  "$HERE/claude-tasks-loop.sh" "the test group" --once >/dev/null 2>&1
+[ "$(cat "$TMPROOT/captured-token.txt" 2>/dev/null)" = "tok-read-at-launch" ] \
+  || fail "launch-time secrets read did not export TICKTICK_API_TOKEN to the firing"
+
+# A token already in the environment wins; the file is not even consulted.
+rm -f "$TMPROOT/captured-token.txt"
+env TICKTICK_API_TOKEN=tok-from-env CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
+  "$HERE/claude-tasks-loop.sh" "the test group" --once >/dev/null 2>&1
+[ "$(cat "$TMPROOT/captured-token.txt" 2>/dev/null)" = "tok-from-env" ] \
+  || fail "an environment-supplied TICKTICK_API_TOKEN should win over the secrets file"
 
 echo "PASS"
