@@ -71,6 +71,15 @@ project id per line after it. Until a firing has written one, every tick fires
 exactly as before. `CLAUDE_TASKS_PRECHECK=0` disables the pre-check entirely;
 `--once` ignores it, since that's an explicit "run now".
 
+**The loop reads the secrets file once, at launch.** `claude-tasks-loop.sh`
+sources it before the first tick and exports `TICKTICK_API_TOKEN`, so a
+grant-gated secrets file (a pipe whose every open asks the user to approve)
+costs exactly one grant per launch, answered while you're still at the
+terminal — the per-tick pre-check finds the token already in its environment
+and never opens the file itself. Only the token is exported, not the rest of
+the file: the firings' MCP servers carry their own credentials. The check's
+own sourcing branch remains as a fallback for running it standalone.
+
 **It says what changed.** A "changed" verdict is followed by the snapshot
 lines that differ — `was:` for how a task or PR looked at the previous check,
 `now:` for how it looks now; a line with only a `was:` vanished (a completed
