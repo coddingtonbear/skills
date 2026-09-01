@@ -2,17 +2,17 @@
 name: inbox-triage
 description: >-
   Sweep online-content items (Instagram reels, Reddit links, articles) out of
-  the TickTick Inbox into the daily note for each item's capture date —
+  the Todoist Inbox into the daily note for each item's capture date —
   caption plus Whisper transcript for reels, a summary of what was interesting
   anchored on the user's own annotation, and completion of the triaged item.
   Use when the user says "triage my inbox", "sweep my inbox", "process my
-  TickTick inbox", or asks for saved reels or links to be filed into daily
+  Todoist inbox", or asks for saved reels or links to be filed into daily
   notes.
 ---
 
-# Triaging the TickTick Inbox
+# Triaging the Todoist Inbox
 
-Content encountered on the phone gets shared into the TickTick Inbox as a bare
+Content encountered on the phone gets shared into the Todoist Inbox as a bare
 link and then sits there. This skill moves each such item into the daily note
 for the day it was captured, in the same block format desktop clipping already
 uses, then completes the Inbox item. Everything that is not online content is
@@ -20,7 +20,7 @@ left exactly where it is.
 
 ## Authorization: the Inbox carve-out
 
-Inbox items are the user's own untagged tasks, which the **claude-tasks**
+Inbox items are the user's own unlabeled tasks, which the **claude-tasks**
 boundary normally forbids touching. The user explicitly granted this carve-out
 on 2026-08-25 ("If you've entered the thing into my notes, you can close it.
 These are very low-stakes!"): **completing an Inbox item is authorized only
@@ -31,9 +31,9 @@ reported instead.
 
 ## Scope: what gets triaged
 
-Fetch open Inbox items: resolve the Inbox project id via
-`mcp__ticktick__list_projects` (the virtual `inbox` entry), then
-`mcp__ticktick__filter_tasks` with `{"status": [0], "projectIds": ["<inbox-id>"]}`.
+Fetch open Inbox items with the official Todoist CLI: `td inbox --json --all`.
+Each item's title is its `content` field; reference items as `id:<id>` in
+every later call (a bare ref is a fuzzy title search).
 
 An item is **content** when its title contains a URL — usually a markdown link
 with a free-text annotation glued after it:
@@ -139,8 +139,10 @@ toward Discovery**. Mis-categorization is explicitly tolerated.
 
 Follow **obsidian-formatting**; all vault access via `mcp__obsidian__*` tools.
 
-- **Which note**: the item's *capture date* — TickTick `createdTime` converted
-  to America/Chicago.
+- **Which note**: the item's *capture date* — Todoist `addedAt` converted
+  to America/Chicago. (Items migrated from TickTick in 2026-08 carry the
+  migration date, not the original capture date — for those, fall back to any
+  date evident from the item itself, else today's note, and say so.)
 - **Getting the note** (never copy `daily/template.md` by hand — user
   instruction, 2026-08-25):
   - capture date is *today*: `mcp__obsidian__periodic_note_get_path`
@@ -174,7 +176,7 @@ Follow **obsidian-formatting**; all vault access via `mcp__obsidian__*` tools.
 
 ## Disposing and reporting
 
-- Complete each item (`mcp__ticktick__complete_task`) **only after** its entry
+- Complete each item (`td task complete id:<id>`) **only after** its entry
   was successfully written. An item whose entry could not be written stays
   open.
 - End with a per-item report: title → daily note and section, what substance
@@ -185,5 +187,5 @@ Follow **obsidian-formatting**; all vault access via `mcp__obsidian__*` tools.
 
 When the user asks for a dry run, produce every block exactly as it would be
 written, plus the would-be note paths and sections — but touch neither the
-vault nor TickTick, and complete nothing. Offer a dry run proactively on the
+vault nor Todoist, and complete nothing. Offer a dry run proactively on the
 first-ever invocation over a large backlog.
