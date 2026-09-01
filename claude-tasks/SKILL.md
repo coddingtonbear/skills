@@ -1,6 +1,6 @@
 ---
 name: claude-tasks
-description: Pick up, work, and file delegated Todoist tasks from Claude's own Todoist account (Coddingtonbot) — the queue is every task assigned to that account in the projects shared with it, plans are gated with the claude-plan-required label, decisions and reviews go back to the user as ask subtasks assigned to them, and the user takes work back by reassigning. Use when the user says "let's look at your tasks", "get started on whatever's next", "what's on your plate", "what needs me", "pick up the next task", "add a task for this", or otherwise asks Claude to work from or write to its Todoist queue.
+description: Pick up, work, and file delegated Todoist tasks from Claude's own Todoist account (Coddingtonbot) — the queue is every task assigned to that account in the projects shared with it, in-progress work wears the claude-inflight label, plans are gated with the claude-plan-required label, decisions and reviews go back to the user as ask subtasks assigned to them, and the user takes work back by reassigning. Use when the user says "let's look at your tasks", "get started on whatever's next", "what's on your plate", "what needs me", "pick up the next task", "add a task for this", or otherwise asks Claude to work from or write to its Todoist queue.
 ---
 
 # Working my delegated Todoist task queue
@@ -41,18 +41,18 @@ My queue spans exactly the projects shared with my account — there is no scope
 
 ## Task states
 
-A task's state is carried by its assignment plus two markers I own — the `Phase:` line in its description and its open ask subtask. No status labels.
+A task's state is carried by its assignment plus the markers I own — the `Phase:` line in its description, the `claude-inflight` label, and its open ask subtask.
 
 | State | Signal | Who sets it |
 |---|---|---|
 | **Queued** | Assigned to me, no `Phase:` line yet | the user (assigning is the release) |
-| **In progress** | Assigned to me, `Phase:` line present, no open ask subtask | me (the `Phase:` line is my claim — a concurrent session skips a claimed task) |
+| **In progress** | Assigned to me, `claude-inflight` + `Phase:` line present, no open ask subtask | me (the `Phase:` line is my claim — a concurrent session skips a claimed task) |
 | **Waiting** | Assigned to me, with an open **ask subtask** assigned to the user | me |
 | **Done** | Task completed | me |
 | **Handed back** | `Phase:` line present but no longer assigned to me | the user (reassigning away = *stop, this is mine now*) |
 
+- **`claude-inflight`** — the one label I manage, so the user can see at a glance what I'm actively working on (e.g. via a saved filter on `@claude-inflight`). Added when I claim a task, removed when it goes to Waiting (the ask on the user's plate is the signal then), re-added when an answered ask resumes work, and removed during a handback close-out. The `Phase:` line stays the authoritative claim; the label is the display. Every label change fetches the task first — `td task update --labels` **replaces the whole set**, so write back every other label untouched.
 - **`claude-plan-required`** — a label, orthogonal to state: don't do the thing; tell the user what I *would* do. I investigate, write the plan into the task note, and hand off with a `Needs decision` ask subtask. Implementation starts only after the user answers that ask approving a plan. The label stays on the task as a record and doesn't force a new plan every round. It's the user's label: I never add it, and I leave it in place.
-- **Legacy labels are retired**: `claude`, `claude-ready`, `claude-inflight`, `claude-waiting`, `claude-needs-you`, and `claude-handoff` carried state in the old single-account scheme. On picking up a task assigned to me that still wears any of them, remove them (fetch first — `td task update --labels` **replaces the whole set**, so write back every other label untouched) and mention it in the report. Tasks not assigned to me keep whatever labels they have; they're not mine to groom.
 
 ## Finding and choosing the next task
 
@@ -272,7 +272,8 @@ The user takes a task off my plate by **reassigning it** — to themselves, or t
 1. Read the task, its note (if one exists), its comments, and any still-open ask subtask.
 2. Append a `## Handing over` section to the **task description** (not the note) — state of play, what's done, what's left as concrete next steps, links to the note/branch/PR, and why it stopped. Never alter the user's existing text.
 3. If a task note exists, log a `# Decisions` row marked *by: user* and a dev-log entry, so it never reads later as an abandoned task.
-4. If there's a still-open ask subtask, unassign it (`td --user … task update id:<ask> --unassign`) — it now asserts something false, that I'm waiting on an answer. This is the one edit I make to an ask subtask besides appending a `## Claude says` section; I still never complete one.
+4. Remove `claude-inflight` if the task still wears it — it's my label, and it now asserts something false. Every other label stays exactly as it is.
+5. If there's a still-open ask subtask, unassign it (`td --user … task update id:<ask> --unassign`) — it now asserts something false, that I'm waiting on an answer. This is the one edit I make to an ask subtask besides appending a `## Claude says` section; I still never complete one.
 
 If the user removes my account from the project instead of reassigning, none of this is possible — access is gone and assignments were cleared (verified 2026-08-31). That's the emergency stop: the vault note keeps the durable state, and nothing more is owed.
 
@@ -307,9 +308,9 @@ All vault access goes through `mcp__obsidian__*` tools per the **dev-log** skill
 
 ## Task lifecycle in Todoist
 
-**On starting (from Queued):** read the repo's `AGENTS.md` if it has one — the user keeps project instructions there, and Claude Code does *not* load it automatically (only `CLAUDE.md`), so unless a `CLAUDE.md` imports it (`@AGENTS.md`) or symlinks to it, those instructions reach me only by reading the file deliberately. Then re-fetch comments — new guidance may have landed since the survey. Set the `Phase:` line (the claim), strip any retired `claude-*` status labels (preserving `claude-plan-required` and everything else), and create the task note if warranted.
+**On starting (from Queued):** read the repo's `AGENTS.md` if it has one — the user keeps project instructions there, and Claude Code does *not* load it automatically (only `CLAUDE.md`), so unless a `CLAUDE.md` imports it (`@AGENTS.md`) or symlinks to it, those instructions reach me only by reading the file deliberately. Then re-fetch comments — new guidance may have landed since the survey. Set the `Phase:` line (the claim), add `claude-inflight` (fetch first; preserve every other label), and create the task note if warranted.
 
-**On needing the user:** create the ask subtask (assigned to them), update `Phase:` (including the `Ask:` line), report, stop.
+**On needing the user:** create the ask subtask (assigned to them), update `Phase:` (including the `Ask:` line), remove `claude-inflight`, report, stop.
 
 **On finishing — once the deliverable exists (PR posted, or non-PR work done), in order:**
 

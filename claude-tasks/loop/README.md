@@ -9,12 +9,11 @@ vault, and every run re-surveys the queue from scratch.
     ./claude-tasks-loop.sh 2m 1h            # custom min / max wait
     ./claude-tasks-loop.sh --once
 
-There is **no scope argument**: the queue is every project shared with
-Claude's own Todoist account (Coddingtonbot, `me+claude@adamcoddington.net`),
-and every task in them assigned to it. You scope the loop by sharing a
-project with that account and by removing it — the skill accepts pending
-invitations at the start of each survey and never leaves a project on its
-own.
+The queue is every project shared with Claude's own Todoist account
+(Coddingtonbot, `me+claude@adamcoddington.net`), and every task in them
+assigned to it. You scope the loop by sharing a project with that account
+and by removing it — the skill accepts pending invitations at the start of
+each survey and never leaves a project on its own.
 
 **Pre-check**: before each tick fires, `claude-tasks-check.sh` asks Todoist's
 API directly — no model, no tokens — whether anything could possibly have

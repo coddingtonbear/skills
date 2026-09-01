@@ -6,9 +6,9 @@
 #   claude-tasks-loop.sh 2m 1h              # custom min / max (sleep(1) syntax)
 #   claude-tasks-loop.sh --once             # a single firing, then exit
 #
-# There is no scope argument: the queue is every project shared with Claude's
-# own Todoist account (Coddingtonbot), and every task in them assigned to it.
-# The user scopes the loop by sharing and unsharing projects.
+# The queue is every project shared with Claude's own Todoist account
+# (Coddingtonbot) and every task in them assigned to it; the user scopes the
+# loop by sharing and unsharing projects.
 #
 # Pacing: each firing's report ends with "CLAUDE_TASKS_RESULT: worked|idle"
 # (the claude-tasks skill emits it in loop mode). "worked" resets the wait to

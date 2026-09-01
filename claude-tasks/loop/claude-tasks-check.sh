@@ -18,7 +18,7 @@
 # It runs with CLAUDE'S OWN Todoist token (the Coddingtonbot account), so the
 # queue is discovered rather than configured: the projects are whatever is
 # shared with that account, and the tasks that matter are the ones assigned
-# to it. No scope argument, no state flowing from the firings to the check.
+# to it. No state flows from the firings to the check.
 #
 # Fires when any of these hold:
 #   1. it cannot tell (see above)
