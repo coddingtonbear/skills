@@ -5,10 +5,16 @@
 #                                           # work, doubling while idle, cap 30m
 #   claude-tasks-loop.sh 2m 1h              # custom min / max (sleep(1) syntax)
 #   claude-tasks-loop.sh --once             # a single firing, then exit
+#   claude-tasks-loop.sh --profile work     # the work profile (default: personal,
+#                                           # or $CLAUDE_TASKS_PROFILE)
 #
-# The queue is every project shared with Claude's own Todoist account
-# (Coddingtonbot) and every task in them assigned to it; the user scopes the
-# loop by sharing and unsharing projects.
+# The queue is every project shared with Claude's own Todoist account and
+# every task in them assigned to it; the user scopes the loop by sharing and
+# unsharing projects. WHICH account -- and which GitHub identity, and where
+# the checkouts live -- comes from the profile (../profiles/<name>.env, see
+# the skill's Profiles section). Everything the loop keeps on disk or in the
+# vault is per profile, so a personal and a work loop run side by side
+# without sharing a lock, a fingerprint, or a run note.
 #
 # Pacing: each firing's report ends with "CLAUDE_TASKS_RESULT: worked|idle"
 # (the claude-tasks skill emits it in loop mode). "worked" resets the wait to
@@ -39,13 +45,56 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="${CLAUDE_TASKS_ROOT:-$HOME/Documents/Projects}"
-LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop.lock"
-LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop"
-BOT_USER="${CLAUDE_TASKS_BOT_USER:-me+claude@adamcoddington.net}"
+
+# --- profile ---------------------------------------------------------------
+# `--profile <name>` (anywhere on the command line) or CLAUDE_TASKS_PROFILE
+# picks ../profiles/<name>.env; unset means personal. A variable already in
+# the environment beats the profile's value for the three the loop itself
+# uses (ROOT, BOT_USER, TOKEN_VAR), so a one-off override -- or a test
+# pointing at a scratch root -- needs no edit to the file.
+PROFILE_ARG=""
+ARGS=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile)   PROFILE_ARG="${2:?--profile needs a name}"; shift 2 ;;
+    --profile=*) PROFILE_ARG="${1#--profile=}"; shift ;;
+    *)           ARGS+=("$1"); shift ;;
+  esac
+done
+set -- ${ARGS[@]+"${ARGS[@]}"}
+
+PROFILE="${PROFILE_ARG:-${CLAUDE_TASKS_PROFILE:-personal}}"
+case "$PROFILE" in
+  ""|*[!A-Za-z0-9_-]*) echo "bad profile name: '$PROFILE'" >&2; exit 2 ;;
+esac
+PROFILE_DIR="${CLAUDE_TASKS_PROFILE_DIR:-$HERE/../profiles}"
+PROFILE_FILE="$PROFILE_DIR/$PROFILE.env"
+[ -r "$PROFILE_FILE" ] || { echo "no such profile: $PROFILE ($PROFILE_FILE)" >&2; exit 2; }
+ENV_ROOT="${CLAUDE_TASKS_ROOT:-}"
+ENV_BOT_USER="${CLAUDE_TASKS_BOT_USER:-}"
+ENV_TOKEN_VAR="${CLAUDE_TASKS_TOKEN_VAR:-}"
+# shellcheck disable=SC1090
+. "$PROFILE_FILE"
+ROOT="${ENV_ROOT:-${CLAUDE_TASKS_ROOT:-}}"
+BOT_USER="${ENV_BOT_USER:-${CLAUDE_TASKS_BOT_USER:-}}"
+TOKEN_VAR="${ENV_TOKEN_VAR:-${CLAUDE_TASKS_TOKEN_VAR:-TODOIST_CLAUDE_API_TOKEN}}"
+[ -n "$BOT_USER" ] || { echo "profile $PROFILE: CLAUDE_TASKS_BOT_USER is empty; fill it in $PROFILE_FILE" >&2; exit 2; }
+[ -n "$ROOT" ]     || { echo "profile $PROFILE: CLAUDE_TASKS_ROOT is empty; fill it in $PROFILE_FILE" >&2; exit 2; }
+[ -d "$ROOT" ]     || { echo "profile $PROFILE: root $ROOT is not a directory" >&2; exit 2; }
+case "$TOKEN_VAR" in
+  ""|*[!A-Za-z0-9_]*) echo "profile $PROFILE: bad CLAUDE_TASKS_TOKEN_VAR '$TOKEN_VAR'" >&2; exit 2 ;;
+esac
+PROFILE_DIR="$(cd "$PROFILE_DIR" && pwd)"   # absolute: the firing gets it via --add-dir
+PROFILE_FILE="$PROFILE_DIR/$PROFILE.env"
+# The firing reads the profile file itself; these two tell it (and the
+# pre-check) which one.
+export CLAUDE_TASKS_PROFILE="$PROFILE" CLAUDE_TASKS_TOKEN_VAR="$TOKEN_VAR"
+
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop-$PROFILE.lock"
+LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop/$PROFILE"
 mkdir -p "$LOGDIR"
 LAUNCH_STARTED="$(date -Is)"
-RUN_NOTE="claude-loops/$(date +%Y-%m-%dT%H-%M-%S).md"
+RUN_NOTE="claude-loops/$PROFILE/$(date +%Y-%m-%dT%H-%M-%S).md"
 
 STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue.state}"
 export CLAUDE_TASKS_STATE_FILE="$STATE_FILE" CLAUDE_TASKS_LOCK="$LOCK"
@@ -56,31 +105,38 @@ export CLAUDE_TASKS_STATE_FILE="$STATE_FILE" CLAUDE_TASKS_LOCK="$LOCK"
 # every few minutes. Reading here costs one grant per launch, while the
 # operator is still at the terminal; exporting the token means
 # claude-tasks-check.sh's own sourcing branch (guarded on the variable being
-# unset) never opens the file again. Only TODOIST_CLAUDE_API_TOKEN — the
-# Coddingtonbot account's token, which the pre-check queries with — is taken:
-# the firings' `td` CLI carries its own credentials (the system credential
-# manager), and exporting the whole file would put every secret into each
-# headless session's environment. If the secrets file doesn't carry it, fall
-# back to the td credential store itself.
+# unset) never opens the file again. Only the profile's token variable
+# ($TOKEN_VAR — the bot account's token, which the pre-check queries with) is
+# taken: the firings' `td` CLI carries its own credentials (the system
+# credential manager), and exporting the whole file would put every secret
+# into each headless session's environment. If the secrets file doesn't
+# carry it, fall back to the td credential store itself.
+#
+# The token is looked up under the PROFILE's variable name only, in the
+# environment first and then the file. A generically named token already in
+# the environment is never taken for another profile: the pre-check would
+# then watch the wrong account's queue and skip firings the right one needed.
 SECRETS="${CLAUDE_TASKS_SECRETS:-$HOME/.secrets}"
-if [ -z "${TODOIST_CLAUDE_API_TOKEN:-}" ] && [ -r "$SECRETS" ]; then
-  echo "$(date -Is) reading TODOIST_CLAUDE_API_TOKEN from $SECRETS (a grant prompt may appear; granting now covers the whole launch)"
-  TODOIST_CLAUDE_API_TOKEN="$(set +eu; . "$SECRETS" >/dev/null 2>&1; printf '%s' "${TODOIST_CLAUDE_API_TOKEN:-}")"
+TOKEN="${!TOKEN_VAR:-}"
+if [ -z "$TOKEN" ] && [ -r "$SECRETS" ]; then
+  echo "$(date -Is) reading $TOKEN_VAR from $SECRETS (a grant prompt may appear; granting now covers the whole launch)"
+  TOKEN="$(set +eu; . "$SECRETS" >/dev/null 2>&1; printf '%s' "${!TOKEN_VAR:-}")"
 fi
-if [ -z "${TODOIST_CLAUDE_API_TOKEN:-}" ] && command -v td >/dev/null 2>&1; then
-  TODOIST_CLAUDE_API_TOKEN="$(td --user "$BOT_USER" auth token view 2>/dev/null | grep -oE '[0-9a-f]{40}' | head -1 || true)"
+if [ -z "$TOKEN" ] && command -v td >/dev/null 2>&1; then
+  TOKEN="$(td --user "$BOT_USER" auth token view 2>/dev/null | grep -oE '[0-9a-f]{40}' | head -1 || true)"
 fi
-if [ -n "${TODOIST_CLAUDE_API_TOKEN:-}" ]; then
-  export TODOIST_CLAUDE_API_TOKEN
+if [ -n "$TOKEN" ]; then
+  export "$TOKEN_VAR=$TOKEN"
 else
-  echo "$(date -Is) no TODOIST_CLAUDE_API_TOKEN available; the pre-check will fail open and fire every tick" >&2
+  echo "$(date -Is) no $TOKEN_VAR available; the pre-check will fail open and fire every tick" >&2
 fi
+unset TOKEN
 
-PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Your queue is every project shared with your Todoist account ($BOT_USER) and every task in them assigned to you — accept pending invitations first, then survey and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
+PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Active claude-tasks profile: $PROFILE — read $PROFILE_FILE first; it names the accounts you are (Todoist $BOT_USER, and the GitHub identity mode). Your queue is every project shared with your Todoist account ($BOT_USER) and every task in them assigned to you — accept pending invitations first, then survey and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
-ALLOWED_TOOLS="${CLAUDE_TASKS_ALLOWED_TOOLS:-mcp__obsidian__*,Read,Edit,Write,Glob,Grep,Bash(td:*),Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(date:*),Bash(ls:*),Bash(curl:*)}"
+ALLOWED_TOOLS="${CLAUDE_TASKS_ALLOWED_TOOLS:-mcp__obsidian__*,Read,Edit,Write,Glob,Grep,Bash(td:*),Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(npx:*),Bash(date:*),Bash(ls:*),Bash(curl:*),Bash(printenv:*)}"
 
 # Model for headless firings: an alias (opus, sonnet, haiku) or a full model id.
 # Unset = the session default from ~/.claude/settings.json / ANTHROPIC_MODEL.
@@ -156,6 +212,7 @@ fire() {
       --allowedTools "$ALLOWED_TOOLS" \
       --add-dir "$ROOT" \
       --add-dir "$LOGDIR" \
+      --add-dir "$PROFILE_DIR" \
       "${MODEL_ARGS[@]}" \
       "${OUTPUT_ARGS[@]}" \
       2>&1 | tee -a "$log" | { if [ "$VERBOSE" = 1 ]; then feed; else cat; fi; }
@@ -176,7 +233,7 @@ fire() {
   fi
 }
 
-echo "$(date -Is) run note: $RUN_NOTE (vault, started $LAUNCH_STARTED)"
+echo "$(date -Is) profile: $PROFILE ($BOT_USER, root $ROOT); run note: $RUN_NOTE (vault, started $LAUNCH_STARTED)"
 
 trap 'echo; echo "loop stopped"; exit 0' INT TERM
 

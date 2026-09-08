@@ -15,10 +15,10 @@
 #   * saying "fire" when there is nothing costs exactly one ordinary firing,
 #     which is what happened on every tick before this script existed.
 #
-# It runs with CLAUDE'S OWN Todoist token (the Coddingtonbot account), so the
-# queue is discovered rather than configured: the projects are whatever is
-# shared with that account, and the tasks that matter are the ones assigned
-# to it. No state flows from the firings to the check.
+# It runs with CLAUDE'S OWN Todoist token (the active profile's bot account),
+# so the queue is discovered rather than configured: the projects are
+# whatever is shared with that account, and the tasks that matter are the
+# ones assigned to it. No state flows from the firings to the check.
 #
 # Fires when any of these hold:
 #   1. it cannot tell (see above)
@@ -48,8 +48,18 @@
 # positive 3.
 #
 # Environment:
-#   TODOIST_CLAUDE_API_TOKEN  Coddingtonbot's Todoist API token; sourced from
-#                             CLAUDE_TASKS_SECRETS when not already set
+#   CLAUDE_TASKS_PROFILE      which profile's queue to check (default
+#                             personal); picks the default lock and state
+#                             paths, and the token variable below when that
+#                             isn't given
+#   CLAUDE_TASKS_TOKEN_VAR    the NAME of the variable holding the bot
+#                             account's Todoist API token (the profile's
+#                             CLAUDE_TASKS_TOKEN_VAR; default
+#                             TODOIST_CLAUDE_API_TOKEN). The token is read
+#                             from that variable in the environment, else
+#                             sourced from CLAUDE_TASKS_SECRETS. Only that
+#                             variable is consulted: a token under another
+#                             name would be another profile's account
 #   gh                        the GitHub CLI, logged in with read access to
 #                             the watched repos (the user's own login is fine:
 #                             the pre-check only reads); missing or failing
@@ -66,11 +76,21 @@
 #                             overridden by tests)
 set -uo pipefail
 
-LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROFILE="${CLAUDE_TASKS_PROFILE:-personal}"
+LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop/$PROFILE"
 API="${CLAUDE_TASKS_API_BASE:-https://api.todoist.com/api/v1}"
 SECRETS="${CLAUDE_TASKS_SECRETS:-$HOME/.secrets}"
-LOCK="${CLAUDE_TASKS_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop.lock}"
+LOCK="${CLAUDE_TASKS_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop-$PROFILE.lock}"
 STATE_FILE="${CLAUDE_TASKS_STATE_FILE:-$LOGDIR/queue.state}"
+# Standalone runs (no loop exporting it) take the token variable's name from
+# the profile file, when there is one to read.
+TOKEN_VAR="${CLAUDE_TASKS_TOKEN_VAR:-}"
+PROFILE_FILE="${CLAUDE_TASKS_PROFILE_DIR:-$HERE/../profiles}/$PROFILE.env"
+if [ -z "$TOKEN_VAR" ] && [ -r "$PROFILE_FILE" ]; then
+  TOKEN_VAR="$(. "$PROFILE_FILE" >/dev/null 2>&1; printf '%s' "${CLAUDE_TASKS_TOKEN_VAR:-}")"
+fi
+TOKEN_VAR="${TOKEN_VAR:-TODOIST_CLAUDE_API_TOKEN}"
 # The sorted snapshot behind the fingerprint, kept so a "changed" verdict can
 # say *what* changed instead of only that the hash moved.
 SNAP_FILE="${STATE_FILE%.state}.snap"
@@ -98,12 +118,19 @@ if [ -e "$LOCK" ] && command -v flock >/dev/null 2>&1; then
   flock -n "$LOCK" true || skip "a firing is already running"
 fi
 
-if [ -z "${TODOIST_CLAUDE_API_TOKEN:-}" ] && [ -r "$SECRETS" ]; then
+# A malformed variable name would make the indirect expansion below a fatal
+# shell error -- which is not fail-open -- so check it first.
+case "$TOKEN_VAR" in
+  ""|*[!A-Za-z0-9_]*) fire "bad CLAUDE_TASKS_TOKEN_VAR '$TOKEN_VAR'" ;;
+esac
+TOKEN="${!TOKEN_VAR:-}"
+if [ -z "$TOKEN" ] && [ -r "$SECRETS" ]; then
   set -a; . "$SECRETS" >/dev/null 2>&1 || true; set +a
+  TOKEN="${!TOKEN_VAR:-}"
 fi
-[ -n "${TODOIST_CLAUDE_API_TOKEN:-}" ] || fire "no TODOIST_CLAUDE_API_TOKEN"
+[ -n "$TOKEN" ] || fire "no $TOKEN_VAR (the $PROFILE profile's Todoist token)"
 
-AUTH="Authorization: Bearer $TODOIST_CLAUDE_API_TOKEN"
+AUTH="Authorization: Bearer $TOKEN"
 
 # --- who am I, and is anything pending? ------------------------------------
 # One sync call yields both the account's own uid (so nothing is hardcoded)

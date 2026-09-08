@@ -39,6 +39,9 @@ while [ \$# -gt 0 ]; do
 done
 printf '%s' "\$prompt" > "$CAPTURED_PROMPT"
 printf '%s' "\${TODOIST_CLAUDE_API_TOKEN:-}" > "$TMPROOT/captured-token.txt"
+# Every claude-tasks / Todoist variable the firing inherited, for the
+# profile assertions.
+env | grep -E '^(CLAUDE_TASKS_|TODOIST_)' | sort > "$TMPROOT/captured-env.txt"
 echo "stub claude ran"
 echo "CLAUDE_TASKS_RESULT: worked"
 EOF
@@ -60,6 +63,19 @@ fail() { echo "FAIL: $1"; exit 1; }
 
 RUN_NOTE="$(grep -oE 'claude-loops/[^ ]+\.md' "$CAPTURED_PROMPT" || true)"
 [ -n "$RUN_NOTE" ] || fail "prompt has no claude-loops/*.md vault path"
+case "$RUN_NOTE" in
+  claude-loops/personal/*) ;;
+  *) fail "run note $RUN_NOTE is not under the profile's own folder (claude-loops/personal/)" ;;
+esac
+
+# The default profile is personal, and the firing is told which profile it is
+# and where to read it.
+grep -q 'Active claude-tasks profile: personal' "$CAPTURED_PROMPT" \
+  || fail "prompt does not name the active profile"
+grep -qE 'profiles/personal\.env' "$CAPTURED_PROMPT" \
+  || fail "prompt does not point the firing at the profile file"
+grep -q '^CLAUDE_TASKS_PROFILE=personal$' "$TMPROOT/captured-env.txt" \
+  || fail "firing did not inherit CLAUDE_TASKS_PROFILE=personal"
 
 LAUNCH_STARTED="$(grep -oE 'started at [^.]+' "$CAPTURED_PROMPT" | sed 's/started at //' || true)"
 [ -n "$LAUNCH_STARTED" ] || fail "prompt has no launch-start timestamp"
@@ -78,7 +94,7 @@ if grep -q 'Scope-ids file' "$CAPTURED_PROMPT"; then
   fail "prompt still names a scope-ids file -- that plumbing was removed"
 fi
 
-LOGDIR="$XDG_STATE_HOME/claude-tasks-loop"
+LOGDIR="$XDG_STATE_HOME/claude-tasks-loop/personal"
 [ -n "$(ls "$LOGDIR"/*.log 2>/dev/null || true)" ] || fail "expected a session .log under $LOGDIR"
 [ -z "$(ls "$LOGDIR"/run-*.md 2>/dev/null || true)" ] || fail "found a local run-*.md -- run notes now live in the vault, not $LOGDIR"
 
@@ -139,7 +155,7 @@ SNAP_FILE="$LOGDIR/queue.snap"
 echo "a-fingerprint-for-a-change-nobody-acted-on" > "$STATE_FILE"
 echo "t1|botuid|2026-08-26T10:00:00Z|0|,," > "$SNAP_FILE"
 
-exec 8>"$XDG_RUNTIME_DIR/claude-tasks-loop.lock"
+exec 8>"$XDG_RUNTIME_DIR/claude-tasks-loop-personal.lock"
 flock -n 8 || fail "could not take the test lock"
 stub_check 0
 loop_briefly
@@ -166,5 +182,71 @@ env TODOIST_CLAUDE_API_TOKEN=tok-from-env CLAUDE_TASKS_SECRETS="$TMPROOT/secrets
   "$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1
 [ "$(cat "$TMPROOT/captured-token.txt" 2>/dev/null)" = "tok-from-env" ] \
   || fail "an environment-supplied TODOIST_CLAUDE_API_TOKEN should win over the secrets file"
+
+# --- profiles ---------------------------------------------------------------
+# A second profile (a different bot account, its own token variable, its own
+# root) gets its own lock, log dir, run-note folder, and token -- and never
+# the personal profile's token, even when that one is sitting in the
+# environment under its generic name.
+PROFDIR="$TMPROOT/profiles"
+WORKROOT="$TMPROOT/work"
+mkdir -p "$PROFDIR" "$WORKROOT"
+cat > "$PROFDIR/work.env" <<EOF
+CLAUDE_TASKS_PROFILE=work
+CLAUDE_TASKS_BOT_USER=work-bot@example.com
+CLAUDE_TASKS_TOKEN_VAR=TODOIST_WORK_TOKEN
+CLAUDE_TASKS_GITHUB_MODE=shared
+CLAUDE_TASKS_ROOT=$WORKROOT
+EOF
+printf 'TODOIST_CLAUDE_API_TOKEN=tok-personal\nTODOIST_WORK_TOKEN=tok-work\n' > "$TMPROOT/secrets.env"
+
+work_once() {
+  rm -f "$CAPTURED_PROMPT" "$TMPROOT/captured-env.txt"
+  env -u CLAUDE_TASKS_ROOT "$@" CLAUDE_TASKS_PROFILE_DIR="$PROFDIR" CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
+    "$HERE/claude-tasks-loop.sh" --profile work --once >"$TMPROOT/work.out" 2>&1
+}
+
+work_once -u TODOIST_CLAUDE_API_TOKEN || fail "--profile work failed to launch: $(cat "$TMPROOT/work.out")"
+[ -f "$CAPTURED_PROMPT" ] || fail "--profile work did not fire"
+grep -q 'Active claude-tasks profile: work' "$CAPTURED_PROMPT" || fail "work prompt does not name the work profile"
+grep -q 'work-bot@example.com' "$CAPTURED_PROMPT" || fail "work prompt does not carry the work bot user"
+grep -q "$PROFDIR/work.env" "$CAPTURED_PROMPT" || fail "work prompt does not point at the work profile file"
+grep -q 'claude-loops/work/' "$CAPTURED_PROMPT" || fail "work run note is not under claude-loops/work/"
+grep -q '^CLAUDE_TASKS_PROFILE=work$' "$TMPROOT/captured-env.txt" || fail "work firing did not inherit CLAUDE_TASKS_PROFILE=work"
+grep -q '^CLAUDE_TASKS_TOKEN_VAR=TODOIST_WORK_TOKEN$' "$TMPROOT/captured-env.txt" || fail "work firing did not inherit the token variable name"
+grep -q '^TODOIST_WORK_TOKEN=tok-work$' "$TMPROOT/captured-env.txt" || fail "work token was not read from the secrets file under the profile's variable"
+if grep -q '^TODOIST_CLAUDE_API_TOKEN=' "$TMPROOT/captured-env.txt"; then
+  fail "the work firing was handed the personal token"
+fi
+[ -n "$(ls "$XDG_STATE_HOME/claude-tasks-loop/work"/*.log 2>/dev/null || true)" ] \
+  || fail "work profile did not log under its own state directory"
+grep -q "firing from $WORKROOT" "$TMPROOT/work.out" || fail "work profile did not fire from its own root"
+
+# The personal token in the environment, under its generic name, must not be
+# taken for the work profile: the pre-check would watch the wrong queue.
+work_once TODOIST_CLAUDE_API_TOKEN=tok-personal-env || fail "--profile work with a personal token in the env failed to launch"
+grep -q '^TODOIST_WORK_TOKEN=tok-work$' "$TMPROOT/captured-env.txt" \
+  || fail "work profile did not read its own token when a personal one was in the environment"
+
+# Half-configured or unknown profiles refuse to launch rather than fire
+# against nobody.
+rm -f "$CAPTURED_PROMPT"
+if env CLAUDE_TASKS_PROFILE_DIR="$PROFDIR" "$HERE/claude-tasks-loop.sh" --profile nope --once >/dev/null 2>&1; then
+  fail "an unknown profile should refuse to launch"
+fi
+[ -f "$CAPTURED_PROMPT" ] && fail "an unknown profile fired anyway"
+printf 'CLAUDE_TASKS_PROFILE=blank\nCLAUDE_TASKS_BOT_USER=\nCLAUDE_TASKS_ROOT=%s\n' "$WORKROOT" > "$PROFDIR/blank.env"
+if env -u CLAUDE_TASKS_BOT_USER CLAUDE_TASKS_PROFILE_DIR="$PROFDIR" "$HERE/claude-tasks-loop.sh" --profile blank --once >/dev/null 2>&1; then
+  fail "a profile with an empty bot user should refuse to launch"
+fi
+[ -f "$CAPTURED_PROMPT" ] && fail "a profile with an empty bot user fired anyway"
+
+# CLAUDE_TASKS_PROFILE in the environment selects a profile too (how a
+# per-tree .claude/settings.json picks it), and --profile beats it.
+rm -f "$CAPTURED_PROMPT"
+env -u CLAUDE_TASKS_ROOT -u TODOIST_CLAUDE_API_TOKEN CLAUDE_TASKS_PROFILE=work CLAUDE_TASKS_PROFILE_DIR="$PROFDIR" \
+  CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" "$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1 \
+  || fail "CLAUDE_TASKS_PROFILE=work failed to launch"
+grep -q 'Active claude-tasks profile: work' "$CAPTURED_PROMPT" || fail "CLAUDE_TASKS_PROFILE did not select the work profile"
 
 echo "PASS"

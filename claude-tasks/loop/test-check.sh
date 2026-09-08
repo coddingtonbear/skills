@@ -140,6 +140,30 @@ echo "fails open on auth and sync:"
 PASS=$((PASS + 1))
 echo "  ok: fires when no TODOIST_CLAUDE_API_TOKEN is available"
 
+# The token variable's NAME comes from the profile (CLAUDE_TASKS_TOKEN_VAR),
+# and only that variable is consulted: another profile's token, however it is
+# named, is another account's queue.
+echo 'TODOIST_WORK_TOKEN=stub-work-token' > "$TMPROOT/secrets.env"
+( unset TODOIST_CLAUDE_API_TOKEN
+  err="$(CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" CLAUDE_TASKS_TOKEN_VAR=TODOIST_WORK_TOKEN "$CHECK" 2>&1 >/dev/null)"
+  printf '%s' "$err" | grep -q 'no TODOIST' && exit 1
+  exit 0 ) || fail "should read the token named by CLAUDE_TASKS_TOKEN_VAR from the secrets file"
+PASS=$((PASS + 1))
+echo "  ok: reads the token named by CLAUDE_TASKS_TOKEN_VAR from the secrets file"
+
+( err="$(CLAUDE_TASKS_TOKEN_VAR=TODOIST_WORK_TOKEN "$CHECK" 2>&1 >/dev/null)"; got=$?
+  [ "$got" = 0 ] || exit 1
+  printf '%s' "$err" | grep -q 'no TODOIST_WORK_TOKEN' ) \
+  || fail "must not take TODOIST_CLAUDE_API_TOKEN from the environment when the profile names another variable"
+PASS=$((PASS + 1))
+echo "  ok: ignores a generically named token when the profile names another variable"
+
+( err="$(CLAUDE_TASKS_TOKEN_VAR='bad name' "$CHECK" 2>&1 >/dev/null)"; got=$?
+  [ "$got" = 0 ] && printf '%s' "$err" | grep -q 'bad CLAUDE_TASKS_TOKEN_VAR' ) \
+  || fail "a malformed CLAUDE_TASKS_TOKEN_VAR should fire (fail open), not crash the shell"
+PASS=$((PASS + 1))
+echo "  ok: fires on a malformed CLAUDE_TASKS_TOKEN_VAR instead of crashing"
+
 echo 500 > "$FIXDIR/sync.code"
 expect 0 "fires when the sync endpoint returns a non-200"
 rm -f "$FIXDIR/sync.code"
