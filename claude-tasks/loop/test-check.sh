@@ -175,6 +175,15 @@ fixture "t9 - - 2026-08-26T10:00:00Z 0 - Phase: 2/3 — delivered\\n\\n## Handin
 rm -f "$CLAUDE_TASKS_STATE_FILE" "${CLAUDE_TASKS_STATE_FILE%.state}.snap"
 expect 0 "records a first fingerprint after the close-out"
 expect 10 "a closed-out handback (## Handing over present) is nobody's business"
+# An ask subtask left open after a close-out (a close-out from before the
+# skill completed them, or a crashed one): Phase: line from the ask template,
+# no ## Handing over, unassigned, parent no longer Claude's. It must not read
+# as a handback -- that misread fires every tick with nothing to clear it.
+fixture "t9 - - 2026-08-26T10:00:00Z 0 - Phase: 2/3 — delivered\\n\\n## Handing over\\ndone" \
+        "a9 t9 - 2026-08-26T10:05:00Z 0 - Phase: 2/3 — delivered\\n\\n## What I need\\n…"
+rm -f "$CLAUDE_TASKS_STATE_FILE" "${CLAUDE_TASKS_STATE_FILE%.state}.snap"
+"$CHECK" >/dev/null 2>&1 || true
+expect 10 "an orphaned ask subtask under a closed-out handback is not a handback"
 
 echo
 echo "waiting tasks and the fingerprint:"

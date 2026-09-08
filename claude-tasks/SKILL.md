@@ -210,7 +210,7 @@ Kinds:
 - **edit** — change the work task's description: I re-read it on pickup.
 - **ignore** — leave it open and silent: still thinking; the task is not mine to touch.
 
-I never complete an ask subtask myself — with one exception: when the user answers a `Needs review: PR <n>` ask on GitHub instead (see Approval on GitHub), I complete it, after leaving a comment linking the approval or merge, so the transcript still records how the round ended. I never change its title or the text already in its description (appending a `## Claude says (<timestamp>)` section is the one allowed edit), and never reuse one for a new ask: each new question after a completed ask gets a fresh subtask, so the work task's completed subtasks are the transcript in order. Then **stop**: report in chat what I handed off, with the subtask's title, and end the turn.
+I never complete an ask subtask myself — with two exceptions: when the user answers a `Needs review: PR <n>` ask on GitHub instead (see Approval on GitHub), I complete it, after leaving a comment linking the approval or merge, so the transcript still records how the round ended; and during a handback close-out (see Handing back), where the ask is moot because the task is no longer mine. I never change its title or the text already in its description (appending a `## Claude says (<timestamp>)` section is the one allowed edit), and never reuse one for a new ask: each new question after a completed ask gets a fresh subtask, so the work task's completed subtasks are the transcript in order. Then **stop**: report in chat what I handed off, with the subtask's title, and end the turn.
 
 ### Linking to vault notes
 
@@ -255,7 +255,7 @@ An approval means "merge it, once the comments are handled", so, in order:
 
 1. **Resolve every unaddressed comment on the PR first** — inline review comments, the review body, and the conversation thread — using the routing above. Comments whose resolution is obvious and well-scoped: make the change, push, reply. A comment that is unclear, controversial, or would need one of the other standing gates: reply asking or explaining, **stop here** — don't merge, stay Waiting, and say so in the report. The approval is still on file; once the user answers and the comment is resolved, continue from here (a reply from them that changes the code invalidates the approval anyway, so a fresh one will be needed — re-request their review after pushing it, per Responding to PR comments).
 2. **Merge** — only on a repo the user owns; elsewhere an approval is a `Needs decision` ask to merge, like anything else public there. Match the repo's existing merge convention (look at how recent PRs were merged: merge commits vs squash vs rebase; `AGENTS.md` wins if it says), delete the remote branch, and confirm the merge landed.
-3. **Close out** — comment on the ask subtask linking the approval and the merge, complete the ask subtask, then complete the work task and finish as usual (dev log, report). This is the one case where I complete an ask subtask myself.
+3. **Close out** — comment on the ask subtask linking the approval and the merge, complete the ask subtask, then complete the work task and finish as usual (dev log, report). This and the handback close-out are the only cases where I complete an ask subtask myself.
 
 ### When a PR is superseded
 
@@ -273,7 +273,7 @@ The user takes a task off my plate by **reassigning it** — to themselves, or t
 2. Append a `## Handing over` section to the **task description** (not the note) — state of play, what's done, what's left as concrete next steps, links to the note/branch/PR, and why it stopped. Never alter the user's existing text.
 3. If a task note exists, log a `# Decisions` row marked *by: user* and a dev-log entry, so it never reads later as an abandoned task.
 4. Remove `claude-inflight` if the task still wears it — it's my label, and it now asserts something false. Every other label stays exactly as it is.
-5. If there's a still-open ask subtask, unassign it (`td --user … task update id:<ask> --unassign`) — it now asserts something false, that I'm waiting on an answer. This is the one edit I make to an ask subtask besides appending a `## Claude says` section; I still never complete one.
+5. If there's a still-open ask subtask, leave a one-line comment on it saying the task was handed back (linking the work task), then complete it (`td --user … task complete id:<ask>`) — it asserts something false, that I'm waiting on an answer, and an open subtask left behind would keep the loop's pre-check firing on it. This is one of the two cases where I complete an ask subtask (the other is Approval on GitHub); the user's decision to allow it here dates from 2026-09-04.
 
 If the user removes my account from the project instead of reassigning, none of this is possible — access is gone and assignments were cleared (verified 2026-08-31). That's the emergency stop: the vault note keeps the durable state, and nothing more is owed.
 
