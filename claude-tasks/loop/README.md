@@ -8,12 +8,58 @@ vault, and every run re-surveys the queue from scratch.
     ./claude-tasks-loop.sh                  # adaptive pacing, 5m..30m
     ./claude-tasks-loop.sh 2m 1h            # custom min / max wait
     ./claude-tasks-loop.sh --once
+    ./claude-tasks-loop.sh --profile work   # the work profile (default: personal)
 
-The queue is every project shared with Claude's own Todoist account
-(Coddingtonbot, `me+claude@adamcoddington.net`), and every task in them
-assigned to it. You scope the loop by sharing a project with that account
-and by removing it — the skill accepts pending invitations at the start of
-each survey and never leaves a project on its own.
+The queue is every project shared with Claude's own Todoist account, and
+every task in them assigned to it. You scope the loop by sharing a project
+with that account and by removing it — the skill accepts pending invitations
+at the start of each survey and never leaves a project on its own.
+
+## Profiles
+
+*Which* account — and which GitHub identity, and where the checkouts live —
+is a **profile**: `../profiles/<name>.env`, a flat shell-sourceable file the
+loop sources at launch and the firing reads as text (the skill's *Profiles*
+section explains each variable). `--profile <name>` or `CLAUDE_TASKS_PROFILE`
+selects one; unset means `personal` (Coddingtonbot). `work` is
+Coddingtonworkbot on Todoist and your own login on GitHub, with 🤖-prefixed
+comments so you can still tell who wrote what.
+
+Everything the loop keeps is per profile, so a personal and a work loop run
+side by side without treading on each other:
+
+| | personal | work |
+|---|---|---|
+| lock | `$XDG_RUNTIME_DIR/claude-tasks-loop-personal.lock` | `…-work.lock` |
+| logs, fingerprint, `precheck.log` | `~/.local/state/claude-tasks-loop/personal/` | `…/work/` |
+| run notes (vault) | `claude-loops/personal/<timestamp>.md` | `claude-loops/work/…` |
+| token | the secrets-file entry the profile's `CLAUDE_TASKS_TOKEN_VAR` names | same |
+
+The loop refuses to launch a profile whose `CLAUDE_TASKS_BOT_USER` or
+`CLAUDE_TASKS_ROOT` is empty (the work profile ships that way until the
+accounts exist), and a variable already in the environment — `CLAUDE_TASKS_ROOT`,
+`CLAUDE_TASKS_BOT_USER`, `CLAUDE_TASKS_TOKEN_VAR` — beats the profile's value
+for a one-off override. The firing gets `CLAUDE_TASKS_PROFILE` in its
+environment, the profile file's path in its prompt, and the profiles folder
+via `--add-dir`.
+
+The work profile needs one more thing the loop can't supply: the GitHub
+identity for that tree. Put it in the work checkouts' parent folder as
+`.claude/settings.json`, which every session and firing started under that
+folder loads:
+
+    {
+      "env": {
+        "CLAUDE_TASKS_PROFILE": "work",
+        "GH_TOKEN": "<your own token>",
+        "GIT_AUTHOR_NAME": "…", "GIT_AUTHOR_EMAIL": "…",
+        "GIT_COMMITTER_NAME": "…", "GIT_COMMITTER_EMAIL": "…"
+      }
+    }
+
+Add `GH_HOST` there too if work GitHub is an Enterprise host — the pre-check's
+PR watching (`gh api`) inherits it. Interactive sessions opened under that
+folder are work sessions automatically; nothing has to be said in chat.
 
 **Pre-check**: before each tick fires, `claude-tasks-check.sh` asks Todoist's
 API directly — no model, no tokens — whether anything could possibly have
@@ -73,22 +119,29 @@ It fires when any of these hold:
   token shows up as extra firings rather than as approvals silently sitting
   unnoticed.
 
-It needs `TODOIST_CLAUDE_API_TOKEN` — **Coddingtonbot's** API token, not
-yours — read from the environment, sourced from `~/.secrets` (override with
-`CLAUDE_TASKS_SECRETS`), or, at loop launch, pulled from the td credential
-store (`td --user me+claude@… auth token view`). `CLAUDE_TASKS_PRECHECK=0`
-disables the pre-check entirely; `--once` ignores it, since that's an
-explicit "run now".
+It needs the **bot account's** API token, not yours — the secrets-file entry
+the profile's `CLAUDE_TASKS_TOKEN_VAR` names — read from that variable in the
+environment, sourced from `~/.secrets` (override with `CLAUDE_TASKS_SECRETS`),
+or, at loop launch, pulled from the td credential store (`td --user <bot> auth
+token view`). Both shipped profiles name the same variable,
+`TODOIST_CLAUDE_API_TOKEN`, because each profile runs on its own machine and
+that machine's secrets file holds its own bot's token; give the variables
+different names only if two profiles ever share a machine. Only the named
+variable is ever consulted: a token under another name would be another
+profile's account, and a check run against the wrong account would skip
+firings the right one needed. `CLAUDE_TASKS_PRECHECK=0` disables the
+pre-check entirely; `--once` ignores it, since that's an explicit "run now".
 
 **The loop reads the secrets file once, at launch.** `claude-tasks-loop.sh`
-sources it before the first tick and exports `TODOIST_CLAUDE_API_TOKEN`, so a
-grant-gated secrets file (a pipe whose every open asks the user to approve)
+sources it before the first tick and exports the profile's token variable, so
+a grant-gated secrets file (a pipe whose every open asks the user to approve)
 costs exactly one grant per launch, answered while you're still at the
 terminal — the per-tick pre-check finds the token already in its environment
 and never opens the file itself. Only the token is exported, not the rest of
 the file: the firings' `td` CLI carries its own credentials (the system
 credential manager). The check's own sourcing branch remains as a fallback
-for running it standalone.
+for running it standalone, where it reads the variable's name from the
+profile named by `CLAUDE_TASKS_PROFILE`.
 
 **It says what changed.** A "changed" verdict is followed by the snapshot
 lines that differ — `was:` for how a task or PR looked at the previous check,
@@ -129,7 +182,8 @@ the problem and ends `idle`, so backoff caps the cost until you fix the
 membership.
 
 Run it in a terminal or a tmux window. Output streams to the terminal *and*
-to `~/.local/state/claude-tasks-loop/<timestamp>.log` (last 200 kept).
+to `~/.local/state/claude-tasks-loop/<profile>/<timestamp>.log` (last 200
+kept).
 
 **Overlap protection**: each firing takes a non-blocking `flock`; a firing
 that finds the lock held (a long-running previous firing, or a second copy of
@@ -140,9 +194,9 @@ the script) is skipped and noted in `skipped.log` rather than run alongside.
 Obsidian MCP tools, file tools, `curl` for the invitation-acceptance sync
 calls, and `git`/`gh`/`npm`/`npx`). A denied tool should surface in the run
 as a `NEEDS: unblock`; extend the list via `CLAUDE_TASKS_ALLOWED_TOOLS` if
-that happens. `CLAUDE_TASKS_ROOT` overrides the projects root (default
-`~/Documents/Projects`); `CLAUDE_TASKS_BOT_USER` overrides the bot account
-ref used in the prompt and the td-credential-store fallback.
+that happens. `CLAUDE_TASKS_ROOT` overrides the profile's projects root;
+`CLAUDE_TASKS_BOT_USER` overrides its bot account ref (used in the prompt and
+the td-credential-store fallback).
 
 **Permissions in practice**: headless runs never prompt — a tool outside the
 allowlist is denied outright and the model is told so, which the skill turns
@@ -150,7 +204,7 @@ into a `NEEDS: unblock` on the task. Watch the log for "denied" if a run
 stalls, then extend the allowlist.
 
 **Run log**: each launch of the script gets one Obsidian note, in the vault's
-`claude-loops/` folder, shared across every firing of that launch (a `--once`
+`claude-loops/<profile>/` folder, shared across every firing of that launch (a `--once`
 run gets its own too) — the script passes the note's vault path and the
 launch's real start time (from `date`) to each firing. The skill has the
 first firing create the note and every firing that works a task append a
