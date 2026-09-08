@@ -222,9 +222,12 @@ for tid, t in tasks.items():
 for tid in sorted(mine):
     if tid not in asks:
         print("fire|task %s is assigned to Claude with no open ask" % tid)
+# Top-level tasks only: an ask subtask also opens with a Phase: line (the
+# ask template) and never gets a Handing over section, so it must never be a
+# handback candidate -- whatever its parent is assigned to.
 for tid, t in sorted(tasks.items()):
-    if (t["resp"] != uid and "P" in t["flags"] and "H" not in t["flags"]
-            and t["parent"] not in mine and tid not in mine):
+    if (t["resp"] != uid and t["parent"] == "-"
+            and "P" in t["flags"] and "H" not in t["flags"]):
         print("fire|task %s looks handed back and not closed out" % tid)
 watched = sorted(mine) + sorted(x for xs in asks.values() for x in xs)
 for tid in watched:

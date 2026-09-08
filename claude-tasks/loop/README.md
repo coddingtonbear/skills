@@ -42,9 +42,12 @@ It fires when any of these hold:
   assigned-with-no-ask.) A standing positive: it keeps firing until the
   state changes, and deliberately records no fingerprint, so a crashed
   firing can never be fingerprinted into silence;
-- a task bearing the skill's `Phase:` line is **no longer assigned to
-  Claude** and has no `## Handing over` section — you took it back and the
-  close-out hasn't run (also standing);
+- a **top-level** task bearing the skill's `Phase:` line is **no longer
+  assigned to Claude** and has no `## Handing over` section — you took it
+  back and the close-out hasn't run (also standing). Subtasks are never
+  candidates: an ask subtask's body opens with a `Phase:` line too, and it
+  never gets a `## Handing over` section, so reading one as a handback would
+  fire forever;
 - the **fingerprint** of Claude's assigned tasks and their ask subtasks
   differs from the previous check's — covering your comment on an ask
   (`note_count` is in the fingerprint, since a new comment isn't guaranteed
