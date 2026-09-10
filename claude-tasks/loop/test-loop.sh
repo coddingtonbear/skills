@@ -53,11 +53,21 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$STUBDIR/td"
 chmod +x "$STUBDIR/td"
 export PATH="$STUBDIR:$PATH"
 
-BEFORE="$(date -Is)"
-"$HERE/claude-tasks-loop.sh" --once
-AFTER="$(date -Is)"
-
 fail() { echo "FAIL: $1"; exit 1; }
+
+# No profile at all -- no --profile, no CLAUDE_TASKS_PROFILE -- refuses to
+# launch. This is the work-machine failure of 2026-09-10: a launch that
+# named nothing used to default to personal and fire as the wrong identity.
+if env -u CLAUDE_TASKS_PROFILE "$HERE/claude-tasks-loop.sh" --once >"$TMPROOT/noprofile.out" 2>&1; then
+  fail "a launch with no profile should refuse to start"
+fi
+[ -f "$CAPTURED_PROMPT" ] && fail "a launch with no profile fired anyway"
+grep -q 'no profile' "$TMPROOT/noprofile.out" || fail "no-profile refusal did not say why: $(cat "$TMPROOT/noprofile.out")"
+grep -q 'personal' "$TMPROOT/noprofile.out" || fail "no-profile refusal did not list the available profiles"
+
+BEFORE="$(date -Is)"
+"$HERE/claude-tasks-loop.sh" --profile personal --once
+AFTER="$(date -Is)"
 
 [ -f "$CAPTURED_PROMPT" ] || fail "stub claude never ran / prompt not captured"
 
@@ -68,8 +78,7 @@ case "$RUN_NOTE" in
   *) fail "run note $RUN_NOTE is not under the profile's own folder (claude-loops/personal/)" ;;
 esac
 
-# The default profile is personal, and the firing is told which profile it is
-# and where to read it.
+# The firing is told which profile it is and where to read it.
 grep -q 'Active claude-tasks profile: personal' "$CAPTURED_PROMPT" \
   || fail "prompt does not name the active profile"
 grep -qE 'profiles/personal\.env' "$CAPTURED_PROMPT" \
@@ -110,7 +119,7 @@ stub_check() { printf '#!/usr/bin/env bash\nexit %s\n' "$1" > "$CHECKSTUB"; chmo
 # leaves $CAPTURED_PROMPT behind; a skipped tick leaves nothing.
 loop_briefly() {
   rm -f "$CAPTURED_PROMPT"
-  "$HERE/claude-tasks-loop.sh" 1s 1s >/dev/null 2>&1 &
+  "$HERE/claude-tasks-loop.sh" --profile personal 1s 1s >/dev/null 2>&1 &
   local pid=$!
   sleep 3
   kill -TERM "$pid" 2>/dev/null || true
@@ -143,7 +152,7 @@ unset CLAUDE_TASKS_PRECHECK
 
 # --once is an explicit "run now", so it never consults the pre-check.
 rm -f "$CAPTURED_PROMPT"
-"$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1
+"$HERE/claude-tasks-loop.sh" --profile personal --once >/dev/null 2>&1
 [ -f "$CAPTURED_PROMPT" ] || fail "--once should fire regardless of the pre-check"
 
 # --- overlap ---------------------------------------------------------------
@@ -172,14 +181,14 @@ if [ -f "$SNAP_FILE" ]; then fail "kept the pre-check snapshot after the lock tu
 echo 'TODOIST_CLAUDE_API_TOKEN=tok-read-at-launch' > "$TMPROOT/secrets.env"
 rm -f "$TMPROOT/captured-token.txt"
 env -u TODOIST_CLAUDE_API_TOKEN CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
-  "$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1
+  "$HERE/claude-tasks-loop.sh" --profile personal --once >/dev/null 2>&1
 [ "$(cat "$TMPROOT/captured-token.txt" 2>/dev/null)" = "tok-read-at-launch" ] \
   || fail "launch-time secrets read did not export TODOIST_CLAUDE_API_TOKEN to the firing"
 
 # A token already in the environment wins; the file is not even consulted.
 rm -f "$TMPROOT/captured-token.txt"
 env TODOIST_CLAUDE_API_TOKEN=tok-from-env CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" \
-  "$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1
+  "$HERE/claude-tasks-loop.sh" --profile personal --once >/dev/null 2>&1
 [ "$(cat "$TMPROOT/captured-token.txt" 2>/dev/null)" = "tok-from-env" ] \
   || fail "an environment-supplied TODOIST_CLAUDE_API_TOKEN should win over the secrets file"
 
@@ -241,8 +250,8 @@ if env -u CLAUDE_TASKS_BOT_USER CLAUDE_TASKS_PROFILE_DIR="$PROFDIR" "$HERE/claud
 fi
 [ -f "$CAPTURED_PROMPT" ] && fail "a profile with an empty bot user fired anyway"
 
-# CLAUDE_TASKS_PROFILE in the environment selects a profile too (how a
-# per-tree .claude/settings.json picks it), and --profile beats it.
+# CLAUDE_TASKS_PROFILE in the launching shell's environment selects a
+# profile too, and --profile beats it.
 rm -f "$CAPTURED_PROMPT"
 env -u CLAUDE_TASKS_ROOT -u TODOIST_CLAUDE_API_TOKEN CLAUDE_TASKS_PROFILE=work CLAUDE_TASKS_PROFILE_DIR="$PROFDIR" \
   CLAUDE_TASKS_SECRETS="$TMPROOT/secrets.env" "$HERE/claude-tasks-loop.sh" --once >/dev/null 2>&1 \

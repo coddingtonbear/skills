@@ -48,8 +48,10 @@
 # positive 3.
 #
 # Environment:
-#   CLAUDE_TASKS_PROFILE      which profile's queue to check (default
-#                             personal); picks the default lock and state
+#   CLAUDE_TASKS_PROFILE      which profile's queue to check (required --
+#                             the loop exports it; a standalone run must set
+#                             it, and an unset one exits 2 rather than guess
+#                             an identity); picks the default lock and state
 #                             paths, and the token variable below when that
 #                             isn't given
 #   CLAUDE_TASKS_TOKEN_VAR    the NAME of the variable holding the bot
@@ -77,7 +79,8 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROFILE="${CLAUDE_TASKS_PROFILE:-personal}"
+PROFILE="${CLAUDE_TASKS_PROFILE:-}"
+[ -n "$PROFILE" ] || { echo "$(date -Is) claude-tasks-check: CLAUDE_TASKS_PROFILE is unset; set it (the loop exports it) -- refusing to pick a queue" >&2; exit 2; }
 LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop/$PROFILE"
 API="${CLAUDE_TASKS_API_BASE:-https://api.todoist.com/api/v1}"
 SECRETS="${CLAUDE_TASKS_SECRETS:-$HOME/.secrets}"

@@ -10,6 +10,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHECK="$HERE/claude-tasks-check.sh"
 TMPROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPROOT"' EXIT
+# The check has no default profile (the loop exports this); every case below
+# runs as the personal one.
+export CLAUDE_TASKS_PROFILE=personal
 
 FIXDIR="$TMPROOT/fixtures"
 STUBDIR="$TMPROOT/bin"
@@ -364,6 +367,16 @@ expect 0 "fires once the lock is free again"
 
 rm -f "$CLAUDE_TASKS_LOCK"
 expect 10 "treats a missing lockfile as nobody firing"
+
+# --- profile ---------------------------------------------------------------
+# No profile means no queue to check: exit 2 (which the loop treats as
+# "fire", like every non-10 status), never a silent guess at personal.
+err="$(env -u CLAUDE_TASKS_PROFILE "$CHECK" 2>&1 >/dev/null)"; got=$?
+[ "$got" = 2 ] || fail "an unset CLAUDE_TASKS_PROFILE should exit 2 (got $got)"
+printf '%s\n' "$err" | grep -q 'CLAUDE_TASKS_PROFILE is unset' \
+  || fail "unset-profile refusal did not say why: $err"
+PASS=$((PASS + 1))
+echo "  ok: refuses to pick a queue with no profile set"
 
 echo
 echo "PASS ($PASS assertions)"

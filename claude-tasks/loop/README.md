@@ -8,7 +8,7 @@ vault, and every run re-surveys the queue from scratch.
     ./claude-tasks-loop.sh                  # adaptive pacing, 5m..30m
     ./claude-tasks-loop.sh 2m 1h            # custom min / max wait
     ./claude-tasks-loop.sh --once
-    ./claude-tasks-loop.sh --profile work   # the work profile (default: personal)
+    ./claude-tasks-loop.sh --profile work   # a profile is required; there is no default
 
 The queue is every project shared with Claude's own Todoist account, and
 every task in them assigned to it. You scope the loop by sharing a project
@@ -21,9 +21,11 @@ at the start of each survey and never leaves a project on its own.
 is a **profile**: `../profiles/<name>.env`, a flat shell-sourceable file the
 loop sources at launch and the firing reads as text (the skill's *Profiles*
 section explains each variable). `--profile <name>` or `CLAUDE_TASKS_PROFILE`
-selects one; unset means `personal` (Coddingtonbot). `work` is
-Coddingtonworkbot on Todoist and your own login on GitHub, with 🤖-prefixed
-comments so you can still tell who wrote what.
+in the launching shell's environment selects one; **neither means the loop
+refuses to start** — there is no default, so a machine that forgets to say
+which identity it is gets an error, not the other identity's queue. `personal`
+is Coddingtonbot; `work` is Coddingtonworkbot on Todoist and your own login on
+GitHub, with 🤖-prefixed comments so you can still tell who wrote what.
 
 Everything the loop keeps is per profile, so a personal and a work loop run
 side by side without treading on each other:
@@ -41,16 +43,18 @@ accounts exist), and a variable already in the environment — `CLAUDE_TASKS_ROO
 `CLAUDE_TASKS_BOT_USER`, `CLAUDE_TASKS_TOKEN_VAR` — beats the profile's value
 for a one-off override. The firing gets `CLAUDE_TASKS_PROFILE` in its
 environment, the profile file's path in its prompt, and the profiles folder
-via `--add-dir`.
+via `--add-dir` — that is the whole hand-off, so a firing needs no
+`settings.json` entry to know which profile it is. (A `settings.json` `env`
+block would not have helped the launch anyway: Claude Code injects it into
+its own sessions, never into the shell that runs this script.)
 
 The work profile needs one more thing the loop can't supply: the GitHub
-identity for that tree. Put it in the work checkouts' parent folder as
-`.claude/settings.json`, which every session and firing started under that
-folder loads:
+identity, since it commits and posts as your own login there. Put it in the
+work machine's `~/.claude/settings.json`, the same place the personal
+machine keeps the bot's:
 
     {
       "env": {
-        "CLAUDE_TASKS_PROFILE": "work",
         "GH_TOKEN": "<your own token>",
         "GIT_AUTHOR_NAME": "…", "GIT_AUTHOR_EMAIL": "…",
         "GIT_COMMITTER_NAME": "…", "GIT_COMMITTER_EMAIL": "…"
@@ -58,8 +62,9 @@ folder loads:
     }
 
 Add `GH_HOST` there too if work GitHub is an Enterprise host — the pre-check's
-PR watching (`gh api`) inherits it. Interactive sessions opened under that
-folder are work sessions automatically; nothing has to be said in chat.
+PR watching (`gh api`) inherits it. Interactive sessions get their profile
+from chat ("work profile") or from `CLAUDE_TASKS_PROFILE` in the session's
+environment; with neither, the skill asks rather than assumes.
 
 **Pre-check**: before each tick fires, `claude-tasks-check.sh` asks Todoist's
 API directly — no model, no tokens — whether anything could possibly have
@@ -141,7 +146,8 @@ and never opens the file itself. Only the token is exported, not the rest of
 the file: the firings' `td` CLI carries its own credentials (the system
 credential manager). The check's own sourcing branch remains as a fallback
 for running it standalone, where it reads the variable's name from the
-profile named by `CLAUDE_TASKS_PROFILE`.
+profile named by `CLAUDE_TASKS_PROFILE` — which a standalone run must set;
+the check exits 2 without it rather than guess a queue.
 
 **It says what changed.** A "changed" verdict is followed by the snapshot
 lines that differ — `was:` for how a task or PR looked at the previous check,

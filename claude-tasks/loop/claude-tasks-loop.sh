@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # The claude-tasks loop, run as a normal foreground command:
 #
-#   claude-tasks-loop.sh                    # adaptive: 5m after a run that did
+#   claude-tasks-loop.sh --profile personal # adaptive: 5m after a run that did
 #                                           # work, doubling while idle, cap 30m
-#   claude-tasks-loop.sh 2m 1h              # custom min / max (sleep(1) syntax)
-#   claude-tasks-loop.sh --once             # a single firing, then exit
-#   claude-tasks-loop.sh --profile work     # the work profile (default: personal,
-#                                           # or $CLAUDE_TASKS_PROFILE)
+#   claude-tasks-loop.sh --profile work 2m 1h   # custom min / max (sleep(1) syntax)
+#   claude-tasks-loop.sh --profile work --once  # a single firing, then exit
+#
+# A profile is REQUIRED: `--profile <name>`, or CLAUDE_TASKS_PROFILE in the
+# environment. There is no default -- a launch that names no profile refuses
+# to start rather than quietly acting as one identity on a machine meant for
+# the other.
 #
 # The queue is every project shared with Claude's own Todoist account and
 # every task in them assigned to it; the user scopes the loop by sharing and
@@ -48,10 +51,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- profile ---------------------------------------------------------------
 # `--profile <name>` (anywhere on the command line) or CLAUDE_TASKS_PROFILE
-# picks ../profiles/<name>.env; unset means personal. A variable already in
-# the environment beats the profile's value for the three the loop itself
-# uses (ROOT, BOT_USER, TOKEN_VAR), so a one-off override -- or a test
-# pointing at a scratch root -- needs no edit to the file.
+# picks ../profiles/<name>.env; neither means refuse (exit 2). A variable
+# already in the environment beats the profile's value for the three the
+# loop itself uses (ROOT, BOT_USER, TOKEN_VAR), so a one-off override -- or a
+# test pointing at a scratch root -- needs no edit to the file.
 PROFILE_ARG=""
 ARGS=()
 while [ $# -gt 0 ]; do
@@ -63,9 +66,10 @@ while [ $# -gt 0 ]; do
 done
 set -- ${ARGS[@]+"${ARGS[@]}"}
 
-PROFILE="${PROFILE_ARG:-${CLAUDE_TASKS_PROFILE:-personal}}"
+PROFILE="${PROFILE_ARG:-${CLAUDE_TASKS_PROFILE:-}}"
+[ -n "$PROFILE" ] || { echo "no profile: pass --profile <name> or set CLAUDE_TASKS_PROFILE (profiles: $(ls "${CLAUDE_TASKS_PROFILE_DIR:-$HERE/../profiles}" 2>/dev/null | sed -n 's/\.env$//p' | tr '\n' ' '))" >&2; exit 2; }
 case "$PROFILE" in
-  ""|*[!A-Za-z0-9_-]*) echo "bad profile name: '$PROFILE'" >&2; exit 2 ;;
+  *[!A-Za-z0-9_-]*) echo "bad profile name: '$PROFILE'" >&2; exit 2 ;;
 esac
 PROFILE_DIR="${CLAUDE_TASKS_PROFILE_DIR:-$HERE/../profiles}"
 PROFILE_FILE="$PROFILE_DIR/$PROFILE.env"
@@ -87,7 +91,9 @@ esac
 PROFILE_DIR="$(cd "$PROFILE_DIR" && pwd)"   # absolute: the firing gets it via --add-dir
 PROFILE_FILE="$PROFILE_DIR/$PROFILE.env"
 # The firing reads the profile file itself; these two tell it (and the
-# pre-check) which one.
+# pre-check) which one. This export, plus the profile named in the prompt
+# below, is the whole hand-off: a firing needs nothing from a settings.json
+# env block to know who it is.
 export CLAUDE_TASKS_PROFILE="$PROFILE" CLAUDE_TASKS_TOKEN_VAR="$TOKEN_VAR"
 
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop-$PROFILE.lock"
