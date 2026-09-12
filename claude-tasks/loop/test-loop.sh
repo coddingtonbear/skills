@@ -30,6 +30,9 @@ cat > "$STUBDIR/claude" <<EOF
 #!/usr/bin/env bash
 # Stub for \`claude -p ...\`: just captures the prompt so the test can
 # inspect what the script handed the firing, then reports success.
+# Every argument, one per line, for the --add-dir assertions (recorded
+# before the loop below consumes them).
+printf '%s\n' "\$@" > "$TMPROOT/captured-args.txt"
 prompt=""
 while [ \$# -gt 0 ]; do
   case "\$1" in
@@ -106,6 +109,30 @@ fi
 LOGDIR="$XDG_STATE_HOME/claude-tasks-loop/personal"
 [ -n "$(ls "$LOGDIR"/*.log 2>/dev/null || true)" ] || fail "expected a session .log under $LOGDIR"
 [ -z "$(ls "$LOGDIR"/run-*.md 2>/dev/null || true)" ] || fail "found a local run-*.md -- run notes now live in the vault, not $LOGDIR"
+
+# --- worktrees --------------------------------------------------------------
+# The firing is handed a worktrees directory: created at launch, reachable
+# without prompts (--add-dir), named in the prompt and the environment. With
+# the root overridden from the environment (as this whole test does) and no
+# CLAUDE_TASKS_WORKTREES override, it follows the root rather than the
+# profile's spelling of it -- a scratch root must never send worktrees into
+# the real ~/Documents/Projects.
+add_dirs() { awk 'prev == "--add-dir" { print } { prev = $0 }' "$TMPROOT/captured-args.txt"; }
+WT_EXPECTED="$CLAUDE_TASKS_ROOT/.claude-tasks-worktrees"
+[ -d "$WT_EXPECTED" ] || fail "launch did not create the worktrees dir $WT_EXPECTED"
+add_dirs | grep -qx "$WT_EXPECTED" || fail "firing was not given --add-dir $WT_EXPECTED (got: $(add_dirs | tr '\n' ' '))"
+grep -q "Temporary worktrees .* go under $WT_EXPECTED" "$CAPTURED_PROMPT" \
+  || fail "prompt does not name the worktrees dir"
+grep -q "^CLAUDE_TASKS_WORKTREES=$WT_EXPECTED\$" "$TMPROOT/captured-env.txt" \
+  || fail "firing did not inherit CLAUDE_TASKS_WORKTREES=$WT_EXPECTED"
+# An explicit CLAUDE_TASKS_WORKTREES in the environment wins over both.
+rm -f "$CAPTURED_PROMPT"
+env CLAUDE_TASKS_WORKTREES="$TMPROOT/wt-override" "$HERE/claude-tasks-loop.sh" --profile personal --once >/dev/null 2>&1 \
+  || fail "launch with CLAUDE_TASKS_WORKTREES override failed"
+[ -d "$TMPROOT/wt-override" ] || fail "worktrees override dir was not created"
+add_dirs | grep -qx "$TMPROOT/wt-override" || fail "worktrees override was not passed as --add-dir"
+grep -q "^CLAUDE_TASKS_WORKTREES=$TMPROOT/wt-override\$" "$TMPROOT/captured-env.txt" \
+  || fail "worktrees override was not exported to the firing"
 
 # --- pre-check ------------------------------------------------------------
 # A stub pre-check stands in for claude-tasks-check.sh so this test covers the
@@ -206,6 +233,7 @@ CLAUDE_TASKS_BOT_USER=work-bot@example.com
 CLAUDE_TASKS_TOKEN_VAR=TODOIST_WORK_TOKEN
 CLAUDE_TASKS_GITHUB_MODE=shared
 CLAUDE_TASKS_ROOT=$WORKROOT
+CLAUDE_TASKS_WORKTREES=$TMPROOT/work-worktrees
 EOF
 printf 'TODOIST_CLAUDE_API_TOKEN=tok-personal\nTODOIST_WORK_TOKEN=tok-work\n' > "$TMPROOT/secrets.env"
 
@@ -230,6 +258,11 @@ fi
 [ -n "$(ls "$XDG_STATE_HOME/claude-tasks-loop/work"/*.log 2>/dev/null || true)" ] \
   || fail "work profile did not log under its own state directory"
 grep -q "firing from $WORKROOT" "$TMPROOT/work.out" || fail "work profile did not fire from its own root"
+# With no root override, the profile's own worktrees path is honored as is.
+[ -d "$TMPROOT/work-worktrees" ] || fail "work profile's worktrees dir was not created"
+add_dirs | grep -qx "$TMPROOT/work-worktrees" || fail "work profile's worktrees dir was not passed as --add-dir"
+grep -q "^CLAUDE_TASKS_WORKTREES=$TMPROOT/work-worktrees\$" "$TMPROOT/captured-env.txt" \
+  || fail "work firing did not inherit the profile's worktrees path"
 
 # The personal token in the environment, under its generic name, must not be
 # taken for the work profile: the pre-check would watch the wrong queue.

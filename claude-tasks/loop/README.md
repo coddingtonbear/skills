@@ -40,11 +40,23 @@ side by side without treading on each other:
 The loop refuses to launch a profile whose `CLAUDE_TASKS_BOT_USER` or
 `CLAUDE_TASKS_ROOT` is empty (the work profile ships that way until the
 accounts exist), and a variable already in the environment — `CLAUDE_TASKS_ROOT`,
-`CLAUDE_TASKS_BOT_USER`, `CLAUDE_TASKS_TOKEN_VAR` — beats the profile's value
-for a one-off override. The firing gets `CLAUDE_TASKS_PROFILE` in its
-environment, the profile file's path in its prompt, and the profiles folder
-via `--add-dir` — that is the whole hand-off, so a firing needs no
-`settings.json` entry to know which profile it is. (A `settings.json` `env`
+`CLAUDE_TASKS_BOT_USER`, `CLAUDE_TASKS_TOKEN_VAR`, `CLAUDE_TASKS_WORKTREES` —
+beats the profile's value for a one-off override. The firing gets
+`CLAUDE_TASKS_PROFILE` in its environment, the profile file's path in its
+prompt, and the profiles folder via `--add-dir` — that is the whole
+hand-off, so a firing needs no `settings.json` entry to know which profile
+it is.
+
+**Worktrees.** Under the work profile the checkout is your own development
+environment, so a task works in a temporary git worktree unless you label it
+`claude-devenv` (the skill's *Workspaces* section). The loop creates the
+worktrees directory at launch — the profile's `CLAUDE_TASKS_WORKTREES`,
+`<root>/.claude-tasks-worktrees` by default — passes it as `--add-dir` so the
+firing can work there without prompts, names it in the prompt, and exports
+the resolved path as `CLAUDE_TASKS_WORKTREES`. A root override from the
+environment moves the default along with it (a scratch root never sends
+worktrees into the real projects folder); an explicit `CLAUDE_TASKS_WORKTREES`
+in the environment wins over both. (A `settings.json` `env`
 block would not have helped the launch anyway: Claude Code injects it into
 its own sessions, never into the shell that runs this script.)
 

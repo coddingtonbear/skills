@@ -52,9 +52,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # --- profile ---------------------------------------------------------------
 # `--profile <name>` (anywhere on the command line) or CLAUDE_TASKS_PROFILE
 # picks ../profiles/<name>.env; neither means refuse (exit 2). A variable
-# already in the environment beats the profile's value for the three the
-# loop itself uses (ROOT, BOT_USER, TOKEN_VAR), so a one-off override -- or a
-# test pointing at a scratch root -- needs no edit to the file.
+# already in the environment beats the profile's value for the four the
+# loop itself uses (ROOT, BOT_USER, TOKEN_VAR, WORKTREES), so a one-off
+# override -- or a test pointing at a scratch root -- needs no edit to the
+# file.
 PROFILE_ARG=""
 ARGS=()
 while [ $# -gt 0 ]; do
@@ -77,14 +78,28 @@ PROFILE_FILE="$PROFILE_DIR/$PROFILE.env"
 ENV_ROOT="${CLAUDE_TASKS_ROOT:-}"
 ENV_BOT_USER="${CLAUDE_TASKS_BOT_USER:-}"
 ENV_TOKEN_VAR="${CLAUDE_TASKS_TOKEN_VAR:-}"
+ENV_WORKTREES="${CLAUDE_TASKS_WORKTREES:-}"
 # shellcheck disable=SC1090
 . "$PROFILE_FILE"
 ROOT="${ENV_ROOT:-${CLAUDE_TASKS_ROOT:-}}"
+# Where a firing puts temporary worktrees (the skill's Workspaces section).
+# The profile's value is spelled in terms of its own root, so a root
+# override from the environment moves the worktrees along with it unless
+# the environment names them too.
+if [ -n "$ENV_WORKTREES" ]; then
+  WORKTREES="$ENV_WORKTREES"
+elif [ -n "$ENV_ROOT" ]; then
+  WORKTREES="$ROOT/.claude-tasks-worktrees"
+else
+  WORKTREES="${CLAUDE_TASKS_WORKTREES:-$ROOT/.claude-tasks-worktrees}"
+fi
 BOT_USER="${ENV_BOT_USER:-${CLAUDE_TASKS_BOT_USER:-}}"
 TOKEN_VAR="${ENV_TOKEN_VAR:-${CLAUDE_TASKS_TOKEN_VAR:-TODOIST_CLAUDE_API_TOKEN}}"
 [ -n "$BOT_USER" ] || { echo "profile $PROFILE: CLAUDE_TASKS_BOT_USER is empty; fill it in $PROFILE_FILE" >&2; exit 2; }
 [ -n "$ROOT" ]     || { echo "profile $PROFILE: CLAUDE_TASKS_ROOT is empty; fill it in $PROFILE_FILE" >&2; exit 2; }
 [ -d "$ROOT" ]     || { echo "profile $PROFILE: root $ROOT is not a directory" >&2; exit 2; }
+mkdir -p "$WORKTREES" || { echo "profile $PROFILE: cannot create worktrees dir $WORKTREES" >&2; exit 2; }
+WORKTREES="$(cd "$WORKTREES" && pwd)"   # absolute: the firing gets it via --add-dir
 case "$TOKEN_VAR" in
   ""|*[!A-Za-z0-9_]*) echo "profile $PROFILE: bad CLAUDE_TASKS_TOKEN_VAR '$TOKEN_VAR'" >&2; exit 2 ;;
 esac
@@ -95,6 +110,9 @@ PROFILE_FILE="$PROFILE_DIR/$PROFILE.env"
 # below, is the whole hand-off: a firing needs nothing from a settings.json
 # env block to know who it is.
 export CLAUDE_TASKS_PROFILE="$PROFILE" CLAUDE_TASKS_TOKEN_VAR="$TOKEN_VAR"
+# The resolved worktrees path too: the skill treats the environment's value
+# as authoritative over the profile text, exactly as it does for the root.
+export CLAUDE_TASKS_WORKTREES="$WORKTREES"
 
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/claude-tasks-loop-$PROFILE.lock"
 LOGDIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-tasks-loop/$PROFILE"
@@ -138,7 +156,7 @@ else
 fi
 unset TOKEN
 
-PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Active claude-tasks profile: $PROFILE — read $PROFILE_FILE first; it names the accounts you are (Todoist $BOT_USER, and the GitHub identity mode). Your queue is every project shared with your Todoist account ($BOT_USER) and every task in them assigned to you — accept pending invitations first, then survey and work one task; end with the CLAUDE_TASKS_RESULT marker. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
+PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Active claude-tasks profile: $PROFILE — read $PROFILE_FILE first; it names the accounts you are (Todoist $BOT_USER, and the GitHub identity mode). Your queue is every project shared with your Todoist account ($BOT_USER) and every task in them assigned to you — accept pending invitations first, then survey and work one task; end with the CLAUDE_TASKS_RESULT marker. Temporary worktrees (per the skill's Workspaces section) go under $WORKTREES. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
@@ -217,6 +235,7 @@ fire() {
       --permission-mode acceptEdits \
       --allowedTools "$ALLOWED_TOOLS" \
       --add-dir "$ROOT" \
+      --add-dir "$WORKTREES" \
       --add-dir "$LOGDIR" \
       --add-dir "$PROFILE_DIR" \
       "${MODEL_ARGS[@]}" \
@@ -239,7 +258,7 @@ fire() {
   fi
 }
 
-echo "$(date -Is) profile: $PROFILE ($BOT_USER, root $ROOT); run note: $RUN_NOTE (vault, started $LAUNCH_STARTED)"
+echo "$(date -Is) profile: $PROFILE ($BOT_USER, root $ROOT, worktrees $WORKTREES); run note: $RUN_NOTE (vault, started $LAUNCH_STARTED)"
 
 trap 'echo; echo "loop stopped"; exit 0' INT TERM
 
