@@ -116,16 +116,19 @@ cookies the JSON API answers normally.
        curl -sL -A "<a current desktop-Chrome UA string>" \
          -b "<scratchpad>/reddit-cookies.txt" "<resolved-url>.json?context=3"
 
-If any step fails, fall back to the resolved URL's slug (it contains the post
-title), the annotation, and an explicit
+Don't reach for **browser-fallback** here: headless Reddit answers with a
+bot check. If any step fails, fall back to the resolved URL's slug (it
+contains the post title), the annotation, and an explicit
 `*(content unavailable — annotation only)*` marker — never a confident-looking
 stub.
 
 ### Everything else
 
 `WebFetch` the URL with a prompt asking for the gist and the single most
-interesting passage. On failure, same rule: entry from title + annotation with
-an explicit marker.
+interesting passage. If that fails — a refused host, a 403, a login wall, or a
+page with no real content — read it in a headless browser per the
+**browser-fallback** skill. Only when that fails too: entry from title +
+annotation with an explicit marker.
 
 ## Classifying: Insight vs Discovery
 
