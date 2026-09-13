@@ -88,15 +88,32 @@ expect_says() {
   echo "  ok: $why"
 }
 
-# Writes $FIXDIR/sync.json: the bot's uid plus N pending share invitations.
+# Writes $FIXDIR/sync.json: the bot's uid, N pending share invitations, and
+# the comments on the account's tasks. Each further argument is
+# "task:count[:text[:del]]" -- count live comments on that task ("text"
+# varies their content, to model an edit), plus one deleted comment when
+# "del" is given. "nonotes" as the first further argument leaves the notes
+# list out of the response entirely.
 sync_fixture() {
-  python3 - "$FIXDIR/sync.json" "$BOT" "${1:-0}" <<'PY'
+  python3 - "$FIXDIR/sync.json" "$BOT" "${1:-0}" "${@:2}" <<'PY'
 import json, sys
-out, uid, pending = sys.argv[1], sys.argv[2], int(sys.argv[3])
+out, uid, pending, specs = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4:]
 ns = [{"notification_type": "share_invitation_sent", "state": "invited",
        "id": "n%d" % i} for i in range(pending)]
 ns.append({"notification_type": "karma_level", "state": None, "id": "nk"})
-json.dump({"user": {"id": uid}, "live_notifications": ns}, open(out, "w"))
+d = {"user": {"id": uid}, "live_notifications": ns}
+if specs[:1] != ["nonotes"]:
+    notes = []
+    for spec in specs:
+        task, count, text, deleted = (spec.split(":") + ["", ""])[:4]
+        for i in range(int(count)):
+            notes.append({"id": "%s-n%d" % (task, i), "item_id": task,
+                          "content": "comment %d%s" % (i, text), "is_deleted": False})
+        if deleted == "del":
+            notes.append({"id": "%s-gone" % task, "item_id": task,
+                          "content": "removed", "is_deleted": True})
+    d["notes"] = notes
+json.dump(d, open(out, "w"))
 PY
 }
 
@@ -114,7 +131,9 @@ PY
 
 # Writes $FIXDIR/<pid>.json from lines of
 # "id parent resp updated_at note_count label[,label] [description]".
-# Use "-" for no parent / unassigned / no labels.
+# Use "-" for no parent / unassigned / no labels. note_count is the tasks
+# endpoint's own field, which Todoist doesn't move when a comment is added;
+# the checker ignores it, and comments come from sync_fixture instead.
 fixture() {
   python3 - "$FIXDIR/$PID.json" "$@" <<'PY'
 import json, sys
@@ -224,17 +243,32 @@ fixture "${WAIT_ROWS[@]}"
 expect 0 "fires the first time, with no recorded fingerprint"
 expect 10 "skips while nothing changes (and the ask's Phase: line is not a handback)"
 
-fixture "t1 - $BOT 2026-08-26T10:00:00Z 0 - Phase: 2/4 — awaiting decision (started 2026-08-26T09:00)" \
-        "a1 t1 $USER_ 2026-08-26T10:05:00Z 1 - Phase: 2/4 — awaiting decision\\n\\n## What I need\\n…"
-expect_says 0 'now: a1\|useruid1\|2026-08-26T10:05:00Z\|1' \
-  "fires when the user comments on the ask (note_count moves), and says so"
-grep -q 'now: a1|useruid1|2026-08-26T10:05:00Z|1' "$TMPROOT/precheck.log" \
+# The bug this guards: on the tasks endpoint a new comment moves neither
+# note_count nor updated_at, so the task rows stay exactly as they were and
+# the comment is visible only through the sync call's notes.
+sync_fixture 0 a1:1
+expect_says 0 'now: a1\|useruid1\|2026-08-26T10:05:00Z\|1:[0-9a-f]{8}\|' \
+  "fires when the user comments on the ask with the task itself unchanged, and says so"
+grep -qE 'now: a1\|useruid1\|2026-08-26T10:05:00Z\|1:[0-9a-f]{8}\|' "$TMPROOT/precheck.log" \
   || fail "the change was not appended to precheck.log"
 grep -q 'queue unchanged' "$TMPROOT/precheck.log" \
   || fail "skip decisions are not appended to precheck.log"
 PASS=$((PASS + 1))
 echo "  ok: decisions and changes land in precheck.log"
 expect 10 "settles back to skipping"
+sync_fixture 0 a1:1:edited
+expect 0 "fires when a comment on the ask is edited"
+expect 10 "settles back to skipping"
+sync_fixture 0 a1:1:edited:del
+expect 10 "ignores a deleted comment"
+sync_fixture 0 t1:1 a1:1:edited
+expect 0 "fires on a comment on the work task itself"
+expect 10 "settles back to skipping"
+sync_fixture 0 t1:1 a1:1:edited u9:4
+expect 10 "ignores comments on tasks it isn't watching"
+sync_fixture 0 nonotes
+expect_says 0 'no comments list' "fires (fails open) when the sync response carries no notes"
+sync_fixture 0
 
 # Completing the ask drops it from the open-task response, leaving the work
 # task assigned-with-no-ask: the standing positive covers what the old

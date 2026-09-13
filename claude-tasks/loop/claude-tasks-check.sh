@@ -33,7 +33,9 @@
 #      and the close-out hasn't run (standing positive)
 #   5. the fingerprint of Claude's assigned tasks and their ask subtasks
 #      differs from the previous check's -- covering a user comment on an ask
-#      (note_count), a description edit (updated_at), and a change of ask
+#      (its comments, read from the sync call's `notes`, since a new comment
+#      moves neither note_count nor updated_at on the tasks endpoint), a
+#      description edit (updated_at), and a change of ask
 #   6. a pull request a Waiting task points at has changed since the previous
 #      check -- a review, a comment, a push, a merge or close. The PRs come
 #      from the `github.com/<owner>/<repo>/pull/<n>` URLs in those tasks'
@@ -136,27 +138,48 @@ fi
 AUTH="Authorization: Bearer $TOKEN"
 
 # --- who am I, and is anything pending? ------------------------------------
-# One sync call yields both the account's own uid (so nothing is hardcoded)
-# and the live notifications, where pending share invitations appear.
+# One sync call yields the account's own uid (so nothing is hardcoded), the
+# live notifications, where pending share invitations appear, and the
+# comments on the account's active tasks. Comments have to come from here:
+# on the tasks endpoint a new comment moves neither the task's note_count nor
+# its updated_at (verified live 2026-09-13), so a fingerprint built from
+# those slept through the user's comments on asks.
+# c|<task id>|<live comment count>:<hash of their ids and text> per commented
+# task, so an edited comment is a change too.
 SYNC_PARSE='
-import json, sys
+import hashlib, json, sys
 d = json.load(sys.stdin)
 print("uid|%s" % d["user"]["id"])
 pending = [n for n in d.get("live_notifications") or []
            if n.get("notification_type") == "share_invitation_sent"
            and n.get("state") == "invited"]
 print("pending|%d" % len(pending))
+notes = d.get("notes")
+if not isinstance(notes, list):
+    print("nonotes|1")
+    sys.exit(0)
+by_task = {}
+for n in notes:
+    if n.get("is_deleted"):
+        continue
+    by_task.setdefault(str(n.get("item_id")), []).append(
+        "%s\x1f%s" % (n.get("id"), n.get("content") or ""))
+for tid, ns in sorted(by_task.items()):
+    digest = hashlib.sha256("\x1e".join(sorted(ns)).encode()).hexdigest()[:8]
+    print("c|%s|%d:%s" % (tid, len(ns), digest))
 '
 RESP="$(curl -sS -m 30 -w $'\n%{http_code}' -X POST -H "$AUTH" \
           -H 'Content-Type: application/json' \
-          -d '{"sync_token":"*","resource_types":["user","live_notifications"]}' \
+          -d '{"sync_token":"*","resource_types":["user","live_notifications","notes"]}' \
           "$API/sync" 2>/dev/null)" || fire "sync request failed"
 CODE="$(printf '%s' "$RESP" | tail -n1)"
 [ "$CODE" = 200 ] || fire "HTTP $CODE from sync"
 SYNC_OUT="$(printf '%s' "$RESP" | sed '$d' | python3 -c "$SYNC_PARSE")" || fire "unparseable sync response"
 UID_="$(printf '%s\n' "$SYNC_OUT" | sed -n 's/^uid|//p')"
 PENDING="$(printf '%s\n' "$SYNC_OUT" | sed -n 's/^pending|//p')"
+COMMENTS="$(printf '%s\n' "$SYNC_OUT" | grep '^c|' || true)"
 [ -n "$UID_" ] || fire "sync response carried no user id"
+[ -z "$(printf '%s\n' "$SYNC_OUT" | sed -n 's/^nonotes|//p')" ] || fire "sync response carried no comments list"
 [ "${PENDING:-0}" = 0 ] || fire "$PENDING pending share invitation(s)"
 
 # --- the projects shared with this account ---------------------------------
@@ -188,7 +211,7 @@ IDS="$(printf '%s' "$IDS" | grep -E '^[A-Za-z0-9]{8,64}$' || true)"
 [ -n "$IDS" ] || skip "no projects are shared with this account"
 
 # --- every open task in those projects, as raw rows ------------------------
-# t|<id>|<parent or ->|<responsible uid or ->|<updated_at>|<note_count>|,labels,|<flags>
+# t|<id>|<parent or ->|<responsible uid or ->|<updated_at>|,labels,|<flags>
 #   flags: P = description carries a "Phase:" line, H = a "## Handing over"
 #   section; both are the skill's own markers.
 # r|<task id>|<owner>/<repo>/<n> per PR URL found in a description.
@@ -202,9 +225,9 @@ for t in d.get("results") or []:
     flags = ""
     if re.search(r"^Phase:", desc, re.M): flags += "P"
     if re.search(r"^## Handing over", desc, re.M): flags += "H"
-    print("t|%s|%s|%s|%s|%s|,%s,|%s" % (
+    print("t|%s|%s|%s|%s|,%s,|%s" % (
         t.get("id"), t.get("parent_id") or "-", t.get("responsible_uid") or "-",
-        t.get("updated_at"), t.get("note_count"), ",".join(labels), flags or "-"))
+        t.get("updated_at"), ",".join(labels), flags or "-"))
     for o, r, n in sorted(set(PR.findall(desc))):
         print("r|%s|%s/%s/%s" % (t.get("id"), o, r, n))
 print("next|%s" % (d.get("next_cursor") or ""))
@@ -234,16 +257,19 @@ done
 CLASSIFY='
 import sys
 uid = sys.argv[1]
-tasks, prs = {}, {}
+tasks, prs, comments = {}, {}, {}
 for line in sys.stdin:
     line = line.rstrip("\n")
     if line.startswith("t|"):
-        _, tid, parent, resp, updated, notes, labels, flags = line.split("|")
+        _, tid, parent, resp, updated, labels, flags = line.split("|")
         tasks[tid] = dict(parent=parent, resp=resp, updated=updated,
-                          notes=notes, labels=labels, flags=flags)
+                          labels=labels, flags=flags)
     elif line.startswith("r|"):
         _, tid, ref = line.split("|")
         prs.setdefault(tid, set()).add(ref)
+    elif line.startswith("c|"):
+        _, tid, sig = line.split("|")
+        comments[tid] = sig
 mine = {tid for tid, t in tasks.items() if t["resp"] == uid}
 asks = {}  # work task id -> open ask subtask ids
 for tid, t in tasks.items():
@@ -262,13 +288,14 @@ for tid, t in sorted(tasks.items()):
 watched = sorted(mine) + sorted(x for xs in asks.values() for x in xs)
 for tid in watched:
     t = tasks[tid]
-    print("snap|%s|%s|%s|%s|%s" % (tid, t["resp"], t["updated"], t["notes"], t["labels"]))
+    print("snap|%s|%s|%s|%s|%s" % (tid, t["resp"], t["updated"],
+                                   comments.get(tid, "0"), t["labels"]))
 for tid in sorted(mine):
     if tid in asks:
         for ref in sorted(prs.get(tid, ())):
             print("pr|%s" % ref)
 '
-CLASSIFIED="$(printf '%s' "$ROWS" | python3 -c "$CLASSIFY" "$UID_")" || fire "classification failed"
+CLASSIFIED="$(printf '%s\n%s' "$COMMENTS" "$ROWS" | python3 -c "$CLASSIFY" "$UID_")" || fire "classification failed"
 
 # A standing positive fires without recording a fingerprint, so a queue that
 # stays in a state already fired on keeps firing until a firing changes it --
@@ -306,7 +333,8 @@ if [ "$NOW" = "$WAS" ]; then
 fi
 
 # Say what moved, line by line, before firing. Task lines read
-# id|responsible|updated_at|note_count|,labels,; PR lines read
+# id|responsible|updated_at|comments|,labels, (comments is <count>:<hash>,
+# or 0 for none); PR lines read
 # owner/repo/n|pr|updated_at|state|merged|head sha. A line only under "was"
 # vanished; only under "now" is new; a pair is an edit, a comment, or PR
 # activity.
