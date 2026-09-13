@@ -112,9 +112,14 @@ It fires when any of these hold:
   never gets a `## Handing over` section, so reading one as a handback would
   fire forever;
 - the **fingerprint** of Claude's assigned tasks and their ask subtasks
-  differs from the previous check's — covering your comment on an ask
-  (`note_count` is in the fingerprint, since a new comment isn't guaranteed
-  to bump `updated_at`), a description edit, and a change of ask. Tasks not
+  differs from the previous check's — covering your comment on an ask, a
+  description edit, and a change of ask. Comments come from the `notes`
+  resource of the sync call the check already makes, not from the tasks
+  endpoint: there a new comment moves neither `note_count` nor `updated_at`,
+  which is how the loop once slept through a comment on an ask for an hour.
+  Each watched task's comments go into the fingerprint as a count and a
+  short hash of their ids and text, so editing a comment counts as a change,
+  and a sync response with no `notes` list fires. Tasks not
   assigned to Claude (and not asks) are ignored, so your own tasks in a
   shared project never trigger a firing;
 - a **pull request a Waiting task points at has changed** — a review (the
@@ -165,7 +170,8 @@ the check exits 2 without it rather than guess a queue.
 lines that differ — `was:` for how a task or PR looked at the previous check,
 `now:` for how it looks now; a line with only a `was:` vanished, one with
 only a `now:` is new. The lines are the raw fingerprint rows:
-`id|responsible|updated_at|note_count|,labels,` for a task,
+`id|responsible|updated_at|comments|,labels,` for a task (`comments` is
+`<count>:<hash>`, or `0` for none),
 `owner/repo/n|pr|updated_at|state|merged|head-sha` for a PR. Every decision,
 with those lines, is also appended to `$LOGDIR/precheck.log` (next to the
 `queue.state` hash and `queue.snap` snapshot it compares against), so a run
