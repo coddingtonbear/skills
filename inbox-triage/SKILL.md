@@ -90,21 +90,40 @@ No transcription (user decision — videos are too long). Metadata only:
 
 Use `title`, `uploader`, and a trimmed `description`.
 
-### Reddit — via Chromium cookies
+### Reddit — via the installed Chrome's cookies
 
-The user is logged into Reddit in **Chromium (the Snap build — its profile is
-at `~/snap/chromium/common/chromium`, not `~/.config/chromium`)**. Verified
-2026-08-25: unauthenticated fetches are blocked on every route, but with those
-cookies the JSON API answers normally.
+The user is logged into Reddit in **whichever Google Chrome is installed**.
+Unauthenticated fetches are blocked on every route, but with that browser's
+cookies the JSON API answers normally (verified 2026-09-13).
 
-1. Export cookies once per run, into the scratchpad (the file holds live
+1. Find the installed Chrome and its profile, rather than assuming a channel
+   or path — the install has changed before (a Snap Chromium, since removed):
+
+       readlink -f "$(command -v google-chrome)"
+
+   The resolved binary names the channel, and the profile is the matching
+   `~/.config` directory: `/opt/google/chrome-beta/…` →
+   `~/.config/google-chrome-beta` (the install as of 2026-09-13),
+   `/opt/google/chrome/…` → `~/.config/google-chrome`,
+   `/opt/google/chrome-unstable/…` → `~/.config/google-chrome-unstable`.
+   Don't use a bare `--cookies-from-browser chrome`: it always reads
+   `~/.config/google-chrome`, which is a stale profile without the login
+   whenever a non-stable channel is the one installed.
+
+2. Export cookies once per run, into the scratchpad (the file holds live
    session tokens — never move it elsewhere, never send it to anything but
    reddit.com, delete it when the run ends):
 
-       yt-dlp --cookies-from-browser "chromium:~/snap/chromium/common/chromium" \
+       yt-dlp --cookies-from-browser "chrome:<profile-dir>" \
          --cookies "<scratchpad>/reddit-cookies.txt" --skip-download --simulate "<any-reddit-url>"
 
-2. Resolve `/s/` share links to the real post URL:
+   yt-dlp's own Reddit extraction usually errors out afterwards (a 403, or
+   a `latin-1` encoding error) and some cookies fail to decrypt — both are
+   harmless as long as the file was written. Judge success by the file, not
+   the exit code: it must contain a `reddit.com` `token_v2` cookie. If it
+   doesn't, the profile is the wrong one or not logged in.
+
+3. Resolve `/s/` share links to the real post URL:
 
        curl -sL -o /dev/null -w "%{url_effective}" "<share-url>"
 
