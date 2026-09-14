@@ -10,7 +10,7 @@ description: >-
 
 **Goal:** Every lab report PDF in the vault has a report note beside it, one result note per measurement it contains, and each result links to a test note that collects that test's history.
 
-**Requirements:** Obsidian MCP tools for every vault read, write and move. PDFs are the one exception: the MCP can't read their contents, so read them from disk with the Read tool at the vault root (`~/Documents/Notes`). Follow **obsidian-formatting** for anything written into a note body.
+**Requirements:** Obsidian MCP tools for every vault read, write and move. PDFs are the one exception: the MCP can't read their contents, so read them from disk with the Read tool at the vault root (`~/Documents/Notes`). Follow **obsidian-formatting** for anything written into a note body. Trend charts on test notes also need the SQLSeal and SQLSeal Charts plugins and the globals listed in [trend-chart.md](trend-chart.md).
 
 **Not medical advice:** copy what the report says. Never compute a flag, judge a value, or add interpretation of your own.
 
@@ -179,6 +179,7 @@ Write in this order. The report note goes **last** because its existence is what
 
 1. **Move the PDF** into `reports/` if it isn't there already.
 2. **Test notes**: create each approved new test note (template below). For an approved new name variant on an existing test note, append it to `reported_as` with `vault_patch` (frontmatter target, `append`).
+   - For every test this report gives a non-zero numeric `value`, check its test note for a `sqlseal` block. If there isn't one, add the `# Trend` section from [trend-chart.md](trend-chart.md) directly above `# History`, verbatim. This covers both new test notes and existing ones getting their first non-zero numeric result.
 3. **Result notes**: one per result, at `results/YYYY-MM-DD <Test>.md`, where the date is the date part of `collected`.
    - If a note at that path already links this same report, it's from an interrupted earlier run: replace it.
    - If a note at that path belongs to a different report (two reports on the same day both measured the test), use `results/YYYY-MM-DD <Test> <specimen_id>.md` instead.
@@ -230,7 +231,7 @@ pdf: "[[permanent/lab-results/reports/2025-01-15_Hemoglobin-A1c.pdf|2025-01-15_H
 
 ### Test note
 
-Created with the Labcorp name that prompted it; the embedded base lists every result that links to the note.
+Created with the Labcorp name that prompted it; the embedded base lists every result that links to the note. When the test has a non-zero numeric result, the `# Trend` section from [trend-chart.md](trend-chart.md) goes between the frontmatter and `# History`; the template below shows a test with none.
 
 ````markdown
 ---
@@ -263,4 +264,4 @@ views:
 
 ## Step 6: Report back
 
-Tell the user which PDFs were processed, how many result notes each produced, which test notes were created or given new name variants, and anything flagged along the way (non-final reports, possible duplicate specimen IDs, uncertain footnote stripping).
+Tell the user which PDFs were processed, how many result notes each produced, which test notes were created or given new name variants, which test notes got a trend chart, and anything flagged along the way (non-final reports, possible duplicate specimen IDs, uncertain footnote stripping).
