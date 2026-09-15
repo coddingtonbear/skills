@@ -1,7 +1,7 @@
 ---
 name: lab-results
 description: >-
-  Turns Labcorp and HealthLab lab-result PDFs into one note per measurement
+  Turns Labcorp, HealthLab and Quest Diagnostics lab-result PDFs into one note per measurement
   (plus a note per report and per test) under permanent/lab-results/ in the
   Obsidian vault, renaming each PDF to the vault's convention on the way in, so
   results can be tabled and charted over time with Obsidian Bases. Use when
@@ -41,16 +41,17 @@ test: "[[permanent/lab-results/tests/LDL Cholesterol|LDL Cholesterol]]"
 
 ## Lab profiles
 
-Two providers, two layouts. Identify which before extracting anything — the header fields, the result table and the footnote conventions all differ, and running one lab's rules over the other's PDF produces wrong values silently.
+Three providers, three layouts. Identify which before extracting anything — the header fields, the result table and the footnote conventions all differ, and running one lab's rules over another's PDF produces wrong values silently.
 
 | Provider | Recognise it by | Parsing rules |
 |---|---|---|
 | Labcorp | "Patient Report" heading; `Test │ Current Result and Flag │ Previous Result and Date │ Units │ Reference Interval` table; a "Performing Labs" key | Step 2 below |
 | HealthLab | `PERFORMING LAB: HealthLab, …` at the foot of each page; three-column `NAME │ VALUE │ REFERENCE RANGE` table | [healthlab.md](healthlab.md) |
+| Quest Diagnostics | `MyQuest` banner; two-column `Analyte │ Value` table with `Reference Range: …` beside each value; downloads as `labreport_<Specimen>.pdf` | [quest.md](quest.md) |
 
-Anything matching neither: stop and ask the user. Don't approximate.
+Anything matching none of these: stop and ask the user. Don't approximate.
 
-The steps, the note templates, the `results`/`tests`/`reports` layout, the value-parsing semantics under "Parsing values" and the review gate are shared by both. Each profile only supplies where the header fields come from and how a result row is read.
+The steps, the note templates, the `results`/`tests`/`reports` layout, the value-parsing semantics under "Parsing values" and the review gate are shared by all of them. Each profile only supplies where the header fields come from and how a result row is read.
 
 ---
 
@@ -60,7 +61,7 @@ A report PDF is named `YYYY-MM-DD_<Primary>[-plusN].pdf`, where the date is the 
 
 The convention is Labcorp's own export naming, which is why a Labcorp download already complies — leave its name alone. Other providers name files their own way, so their PDFs are renamed before being written into the vault.
 
-- **`<Primary>`** — Labcorp: the first entry in `ordered_items`. HealthLab: the panel heading. Turn spaces, `/`, `,` and `.` into `-`, drop the rest of what a file name can't hold (`\ : * ? " < > | # ^ [ ]`) along with parentheses, then collapse repeated `-`. So `Comp. Metabolic Panel (14)` → `Comp-Metabolic-Panel-14`, `CBC/Diff Ambiguous Default` → `CBC-Diff-Ambiguous-Default`, `Testosterone, Free, Direct` → `Testosterone-Free-Direct`.
+- **`<Primary>`** — Labcorp and Quest: the first entry in `ordered_items`. HealthLab: the panel heading. Turn spaces, `/`, `,` and `.` into `-`, drop the rest of what a file name can't hold (`\ : * ? " < > | # ^ [ ]`) along with parentheses, then collapse repeated `-`. So `Comp. Metabolic Panel (14)` → `Comp-Metabolic-Panel-14`, `CBC/Diff Ambiguous Default` → `CBC-Diff-Ambiguous-Default`, `Testosterone, Free, Direct` → `Testosterone-Free-Direct`.
 - **Capitalisation** — keep the source's own, except for a heading printed in all capitals: title-case that one, leaving acronyms capitalised. `LIPID PANEL (AMA) W/LDL CALC` → `Lipid-Panel-AMA-W-LDL-Calc`.
 - **`-plusN`** — only when the lab lists ordered items and there is more than one; `N` is that count less the primary. HealthLab exports one panel per PDF and lists no ordered items, so its names never carry the suffix.
 - **Never take the date from the downloaded file name.** Provider suffixes lie: a file arriving as `… __101024.pdf` proved to have been collected 2024-09-30. The collection date comes from inside the PDF, always.
@@ -92,7 +93,7 @@ If the PDF already has a report note (a targeted re-run), say so and ask before 
 
 Read the whole PDF and identify the provider against the "Lab profiles" table. Stop and ask the user if it matches neither.
 
-**The rest of this step describes Labcorp's layout only.** For a HealthLab report, use [healthlab.md](healthlab.md) instead and rejoin the flow at "Parsing values"; everything from Step 3 on is shared.
+**The rest of this step describes Labcorp's layout only.** For a HealthLab or Quest report, use [healthlab.md](healthlab.md) or [quest.md](quest.md) instead and rejoin the flow at "Parsing values"; everything from Step 3 on is shared.
 
 ### Report header
 
@@ -188,7 +189,7 @@ Copy the flag Labcorp printed; never derive one from the value and reference ran
 
 ## Step 3: Match each result to a test note
 
-Every note in `tests/` has a `reported_as` list of the Labcorp names it covers. For each result:
+Every note in `tests/` has a `reported_as` list of the names, from any lab, that it covers. For each result:
 
 1. Compare `reported_name` against every test note's `reported_as`, ignoring case and repeated whitespace. An exact match is the test.
 2. No match: never guess silently. Propose either an existing test note (when the name is clearly a variant, e.g. `Protein, Total` vs `Protein, Total, Serum`) or a new test note, and let the user decide in Step 4.
