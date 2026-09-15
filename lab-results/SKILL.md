@@ -1,16 +1,17 @@
 ---
 name: lab-results
 description: >-
-  Turns Labcorp lab-result PDFs in the Obsidian vault into one note per
-  measurement (plus a note per report and per test) under
-  permanent/lab-results/, so results can be tabled and charted over time with
-  Obsidian Bases. Use when asked to process, import, or extract a lab result
-  PDF, or to find lab reports that haven't been processed yet.
+  Turns Labcorp and HealthLab lab-result PDFs into one note per measurement
+  (plus a note per report and per test) under permanent/lab-results/ in the
+  Obsidian vault, renaming each PDF to the vault's convention on the way in, so
+  results can be tabled and charted over time with Obsidian Bases. Use when
+  asked to process, import, extract or rename a lab result PDF, or to find lab
+  reports that haven't been processed yet.
 ---
 
 **Goal:** Every lab report PDF in the vault has a report note beside it, one result note per measurement it contains, and each result links to a test note that collects that test's history.
 
-**Requirements:** Obsidian MCP tools for every vault read, write and move. PDFs are the one exception: the MCP can't read their contents, so read them from disk with the Read tool at the vault root (`~/Documents/Notes`). Follow **obsidian-formatting** for anything written into a note body. Trend charts on test notes also need the SQLSeal and SQLSeal Charts plugins and the globals listed in [trend-chart.md](trend-chart.md).
+**Requirements:** Obsidian MCP tools for every vault read, write and move. PDFs are the two exceptions: the MCP can't read their contents, so read them from disk with the Read tool at the vault root (`~/Documents/Notes`), and it can't reach outside the vault at all, so a PDF still sitting in `~/Downloads` is moved in with a plain shell `mv`. Follow **obsidian-formatting** for anything written into a note body. Trend charts on test notes also need the SQLSeal and SQLSeal Charts plugins and the globals listed in [trend-chart.md](trend-chart.md).
 
 **Not medical advice:** copy what the report says. Never compute a flag, judge a value, or add interpretation of your own.
 
@@ -38,12 +39,46 @@ test: "[[permanent/lab-results/tests/LDL Cholesterol|LDL Cholesterol]]"
 
 ---
 
+## Lab profiles
+
+Two providers, two layouts. Identify which before extracting anything — the header fields, the result table and the footnote conventions all differ, and running one lab's rules over the other's PDF produces wrong values silently.
+
+| Provider | Recognise it by | Parsing rules |
+|---|---|---|
+| Labcorp | "Patient Report" heading; `Test │ Current Result and Flag │ Previous Result and Date │ Units │ Reference Interval` table; a "Performing Labs" key | Step 2 below |
+| HealthLab | `PERFORMING LAB: HealthLab, …` at the foot of each page; three-column `NAME │ VALUE │ REFERENCE RANGE` table | [healthlab.md](healthlab.md) |
+
+Anything matching neither: stop and ask the user. Don't approximate.
+
+The steps, the note templates, the `results`/`tests`/`reports` layout, the value-parsing semantics under "Parsing values" and the review gate are shared by both. Each profile only supplies where the header fields come from and how a result row is read.
+
+---
+
+## File naming
+
+A report PDF is named `YYYY-MM-DD_<Primary>[-plusN].pdf`, where the date is the **collection** date, `<Primary>` names what was ordered, and `N` counts the other ordered items. The report note takes the same stem.
+
+The convention is Labcorp's own export naming, which is why a Labcorp download already complies — leave its name alone. Other providers name files their own way, so their PDFs are renamed before being written into the vault.
+
+- **`<Primary>`** — Labcorp: the first entry in `ordered_items`. HealthLab: the panel heading. Turn spaces, `/`, `,` and `.` into `-`, drop the rest of what a file name can't hold (`\ : * ? " < > | # ^ [ ]`) along with parentheses, then collapse repeated `-`. So `Comp. Metabolic Panel (14)` → `Comp-Metabolic-Panel-14`, `CBC/Diff Ambiguous Default` → `CBC-Diff-Ambiguous-Default`, `Testosterone, Free, Direct` → `Testosterone-Free-Direct`.
+- **Capitalisation** — keep the source's own, except for a heading printed in all capitals: title-case that one, leaving acronyms capitalised. `LIPID PANEL (AMA) W/LDL CALC` → `Lipid-Panel-AMA-W-LDL-Calc`.
+- **`-plusN`** — only when the lab lists ordered items and there is more than one; `N` is that count less the primary. HealthLab exports one panel per PDF and lists no ordered items, so its names never carry the suffix.
+- **Never take the date from the downloaded file name.** Provider suffixes lie: a file arriving as `… __101024.pdf` proved to have been collected 2024-09-30. The collection date comes from inside the PDF, always.
+- Renaming a PDF that already has a report note means renaming both and rewriting the `pdf` link and the embed, so get the name right at Step 4.
+
+Existing report notes keep the names Labcorp gave them, off-by-one `-plusN` and all. Don't regenerate them.
+
+---
+
 ## Step 1: Decide what to process
 
 - **Targeted:** the user names a PDF. Process that one.
 - **Sweep:** process every PDF that is either
+  - a fresh download in `~/Downloads` the user has pointed at,
   - directly in `permanent/lab-results/` (a new download), or
   - in `reports/` with no `.md` of the same name beside it.
+
+A PDF in `~/Downloads` is read in place, named per "File naming" above, and `mv`d into `permanent/lab-results/` once its extraction is approved in Step 4. Read every candidate's collection date before ordering the batch; the file names can't be trusted for it.
 
 A PDF sitting directly in `permanent/lab-results/` moves into `reports/` (`vault_move` with destination `permanent/lab-results/reports/`) once its extraction is approved in Step 4. Never move a PDF before that.
 
@@ -55,7 +90,9 @@ If the PDF already has a report note (a targeted re-run), say so and ask before 
 
 ## Step 2: Extract
 
-Read the whole PDF. Stop and ask the user if it isn't a Labcorp "Patient Report"; these rules were written against Labcorp's layout only.
+Read the whole PDF and identify the provider against the "Lab profiles" table. Stop and ask the user if it matches neither.
+
+**The rest of this step describes Labcorp's layout only.** For a HealthLab report, use [healthlab.md](healthlab.md) instead and rejoin the flow at "Parsing values"; everything from Step 3 on is shared.
 
 ### Report header
 
@@ -73,7 +110,7 @@ Read the whole PDF. Stop and ask the user if it isn't a Labcorp "Patient Report"
 
 Check the page footer says **Final Report**. If it says anything else (preliminary, corrected, amended), point that out in the Step 4 review.
 
-Before extracting, search `reports/` for a note with the same `specimen_id`. If one exists, stop and tell the user: it's either a duplicate download or an amended report, and the user decides which.
+Before extracting, search `reports/` for a note with the same `specimen_id`. If one exists, stop and tell the user: it's either a duplicate download or an amended report, and the user decides which. (HealthLab is the exception — it splits one specimen across several PDFs on purpose; see [healthlab.md](healthlab.md).)
 
 **Never copy** patient address, phone, date of birth, age, patient ID, account numbers, control IDs, physician IDs or NPIs into any note. The specimen ID is the one identifier kept, because it identifies the report.
 
@@ -164,10 +201,11 @@ New test note names are readable and specific ("Hepatitis C Antibody", not "Hep 
 
 Before writing anything, show the user:
 
-1. **Header**: the report-note fields from Step 2, plus any footer that isn't "Final Report".
-2. **Results table**: test note (marked *new* where applicable), reported name, panel, result, unit, reference range, flag, beyond measurable range, and any comment going in the body.
-3. **Name matching**: every proposed new test note, and every proposed match of a new name variant to an existing test.
-4. **Skipped rows**: each one with its reason, including every Litholink row left out as a duplicate.
+1. **Name**: the file name the PDF will take, when it isn't already correct, and the name it arrived with.
+2. **Header**: the report-note fields from Step 2, plus any footer that isn't "Final Report".
+3. **Results table**: test note (marked *new* where applicable), reported name, panel, result, unit, reference range, flag, beyond measurable range, and any comment going in the body.
+4. **Name matching**: every proposed new test note, and every proposed match of a new name variant to an existing test.
+5. **Skipped rows**: each one with its reason, including every Litholink row left out as a duplicate.
 
 Wait for approval. Apply corrections and show the changed rows again. During a multi-PDF sweep the user may say "approve all remaining": keep showing each table, but continue without waiting.
 
@@ -177,7 +215,7 @@ Wait for approval. Apply corrections and show the changed rows again. During a m
 
 Write in this order. The report note goes **last** because its existence is what marks a PDF as processed, so an interrupted run gets picked up again by the next sweep.
 
-1. **Move the PDF** into `reports/` if it isn't there already.
+1. **Move the PDF** into `reports/` if it isn't there already, renaming it to the approved name at the same time. A PDF coming from `~/Downloads` is `mv`d with the shell; one already inside the vault moves with `vault_move`.
 2. **Test notes**: create each approved new test note (template below). For an approved new name variant on an existing test note, append it to `reported_as` with `vault_patch` (frontmatter target, `append`).
 3. **Result notes**: one per result, at `results/YYYY-MM-DD <Test>.md`, where the date is the date part of `collected`.
    - If a note at that path already links this same report, it's from an interrupted earlier run: replace it.
@@ -263,4 +301,4 @@ views:
 
 ## Step 6: Report back
 
-Tell the user which PDFs were processed, how many result notes each produced, which test notes were created or given new name variants, which test notes got a trend chart, and anything flagged along the way (non-final reports, possible duplicate specimen IDs, uncertain footnote stripping).
+Tell the user which PDFs were processed and what each was renamed to, how many result notes each produced, which test notes were created or given new name variants, which test notes got a trend chart, and anything flagged along the way (non-final reports, possible duplicate specimen IDs, uncertain footnote stripping).
