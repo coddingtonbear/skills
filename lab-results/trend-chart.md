@@ -32,7 +32,7 @@ Colors are mid-tones or translucent greys because the chart draws on a canvas th
 
 - **Exact test match.** The note's results are found by comparing the start of each result's `test` link with `[[<this note's path>|`. Not `LIKE`: test names such as `Basophils (%)` contain `%`, a `LIKE` wildcard, which would pull in `Basophils (Absolute)` results too.
 - **Zeros don't plot.** SQLSeal stores every falsy frontmatter value as NULL, so `value: 0` looks the same as a missing value and that result is left off the chart; a test whose results are all zero would show a chart error instead, which is why such tests get no Trend section until a non-zero result arrives. Accepted as a SQLSeal quirk rather than worked around by parsing `result`. `ref_low: 0` is lost the same way, which is harmless because a missing lower limit already means 0.
-- **Numbers arrive as text.** SQLSeal stores frontmatter untyped, so `MAX` compares strings (`"89"` beats `"110"`). Anything compared is cast to `REAL` first.
+- **Numbers arrive as text.** SQLSeal creates every column of its `files` table with type `TEXT`, so SQLite converts numeric frontmatter to text as it's inserted, and `MAX` then compares strings (`"89"` beats `"110"`). Anything compared is cast to `REAL` first.
 - **Reference band.** Stacked from `band_low` up by `band_span`, stepped so a changed reference interval shows where it changed.
   - Two-sided range: `ref_low` to `ref_high`.
   - Lower limit only (`>59`): from the limit to 10% above the highest result.

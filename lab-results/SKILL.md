@@ -179,7 +179,6 @@ Write in this order. The report note goes **last** because its existence is what
 
 1. **Move the PDF** into `reports/` if it isn't there already.
 2. **Test notes**: create each approved new test note (template below). For an approved new name variant on an existing test note, append it to `reported_as` with `vault_patch` (frontmatter target, `append`).
-   - For every test this report gives a non-zero numeric `value`, check its test note for a `sqlseal` block. If there isn't one, add the `# Trend` section from [trend-chart.md](trend-chart.md) directly above `# History`, verbatim. This covers both new test notes and existing ones getting their first non-zero numeric result.
 3. **Result notes**: one per result, at `results/YYYY-MM-DD <Test>.md`, where the date is the date part of `collected`.
    - If a note at that path already links this same report, it's from an interrupted earlier run: replace it.
    - If a note at that path belongs to a different report (two reports on the same day both measured the test), use `results/YYYY-MM-DD <Test> <specimen_id>.md` instead.
