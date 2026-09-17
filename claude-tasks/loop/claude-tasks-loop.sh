@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The claude-tasks loop, run as a normal foreground command:
 #
-#   claude-tasks-loop.sh --profile personal # adaptive: 5m after a run that did
-#                                           # work, doubling while idle, cap 30m
+#   claude-tasks-loop.sh --profile personal # adaptive: 15s after a run that did
+#                                           # work, 5m after an idle one, doubling
+#                                           # while idle, cap 30m
 #   claude-tasks-loop.sh --profile work 2m 1h   # custom min / max (sleep(1) syntax)
 #   claude-tasks-loop.sh --profile work --once  # a single firing, then exit
 #
@@ -20,8 +21,11 @@
 # without sharing a lock, a fingerprint, or a run note.
 #
 # Pacing: each firing's report ends with "CLAUDE_TASKS_RESULT: worked|idle"
-# (the claude-tasks skill emits it in loop mode). "worked" resets the wait to
-# MIN; "idle" doubles it up to MAX; a missing marker counts as idle and warns.
+# (the claude-tasks skill emits it in loop mode). "worked" checks again after
+# only CLAUDE_TASKS_WORKED_WAIT (default 15s) -- a queue with more tasks left
+# shouldn't sit for MIN between them, and the pre-check keeps a quick recheck
+# of an emptied queue cheap -- and resets the backoff to MIN; "idle" doubles
+# the backoff up to MAX; a missing marker counts as idle and warns.
 #
 # Every firing is a FRESH headless Claude Code session (`claude -p`), so no
 # context accumulates across firings: all state lives in Todoist and the
@@ -215,6 +219,10 @@ ONCE=0
 if [ "${1:-}" = "--once" ]; then ONCE=1; shift; fi
 MIN_WAIT=$(to_seconds "${1:-5m}")
 MAX_WAIT=$(to_seconds "${2:-30m}")
+# The wait after a firing that did work. Short rather than zero: it leaves a
+# moment to Ctrl-C between firings, and bounds how fast a firing that keeps
+# reporting "worked" without making progress can repeat.
+WORKED_WAIT=$(to_seconds "${CLAUDE_TASKS_WORKED_WAIT:-15s}")
 
 fire() {
   local log="$LOGDIR/$(date +%Y-%m-%dT%H-%M-%S).log"
@@ -278,7 +286,9 @@ should_skip() {
   "$CHECK"; [ "$?" -eq 10 ]
 }
 
-WAIT=$MIN_WAIT
+# BACKOFF is the idle wait, kept apart from the WAIT actually slept so the
+# short post-work wait never becomes the base the idle doubling starts from.
+BACKOFF=$MIN_WAIT
 while true; do
   LAST_RESULT=unknown
   if should_skip; then
@@ -287,11 +297,14 @@ while true; do
     fire
   fi
   case "$LAST_RESULT" in
+    # Work done means there may well be more queued: look again almost at
+    # once. If there isn't, the pre-check skips that tick for free.
+    worked) BACKOFF=$MIN_WAIT; WAIT=$WORKED_WAIT ;;
     # A skipped tick costs nothing, so it earns no backoff: stay at MIN and
     # keep watching cheaply. Backoff exists to stop idle *firings* burning
     # tokens, and still does whenever the pre-check is off or failing open.
-    worked|skipped) WAIT=$MIN_WAIT ;;
-    *) WAIT=$(( WAIT * 2 )); [ "$WAIT" -gt "$MAX_WAIT" ] && WAIT=$MAX_WAIT ;;
+    skipped) BACKOFF=$MIN_WAIT; WAIT=$MIN_WAIT ;;
+    *) BACKOFF=$(( BACKOFF * 2 )); [ "$BACKOFF" -gt "$MAX_WAIT" ] && BACKOFF=$MAX_WAIT; WAIT=$BACKOFF ;;
   esac
   echo "$(date -Is) last run: $LAST_RESULT; next check in $((WAIT/60))m$((WAIT%60))s (Ctrl-C to stop)"
   sleep "$WAIT"
