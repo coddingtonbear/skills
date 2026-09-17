@@ -46,7 +46,8 @@ printf '%s' "\${TODOIST_CLAUDE_API_TOKEN:-}" > "$TMPROOT/captured-token.txt"
 # profile assertions.
 env | grep -E '^(CLAUDE_TASKS_|TODOIST_)' | sort > "$TMPROOT/captured-env.txt"
 echo "stub claude ran"
-echo "CLAUDE_TASKS_RESULT: worked"
+echo x >> "$TMPROOT/firings.txt"
+echo "CLAUDE_TASKS_RESULT: \${STUB_RESULT:-worked}"
 EOF
 chmod +x "$STUBDIR/claude"
 # Stub td: the loop falls back to the td credential store for the bot token
@@ -150,6 +151,9 @@ loop_briefly() {
   local pid=$!
   sleep 3
   kill -TERM "$pid" 2>/dev/null || true
+  # bash runs its trap only once the foreground `sleep` returns, and a worked
+  # firing sleeps longer than these ticks; end the sleep rather than wait it out.
+  pkill -TERM -P "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
 }
 
@@ -176,6 +180,38 @@ export CLAUDE_TASKS_PRECHECK=0
 loop_briefly
 [ -f "$CAPTURED_PROMPT" ] || fail "CLAUDE_TASKS_PRECHECK=0 should fire on every tick"
 unset CLAUDE_TASKS_PRECHECK
+
+# --- pacing -----------------------------------------------------------------
+# After a firing that worked, the next tick comes after the short
+# CLAUDE_TASKS_WORKED_WAIT, not MIN; after an idle one it's still MIN (or
+# more). MIN is an hour here, so a second firing inside the window can only
+# have come from the post-work wait.
+count_firings() {
+  rm -f "$TMPROOT/firings.txt"
+  "$HERE/claude-tasks-loop.sh" --profile personal 1h 2h >"$TMPROOT/pacing.out" 2>&1 &
+  local pid=$!
+  sleep 4
+  kill -TERM "$pid" 2>/dev/null || true
+  # Same as loop_briefly: don't wait out the foreground `sleep`.
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  if [ -f "$TMPROOT/firings.txt" ]; then wc -l < "$TMPROOT/firings.txt" | tr -d ' '; else echo 0; fi
+}
+stub_check 0
+export CLAUDE_TASKS_WORKED_WAIT=1s
+N="$(STUB_RESULT=worked count_firings)"
+[ "$N" -ge 2 ] || fail "a worked firing should be followed within CLAUDE_TASKS_WORKED_WAIT, not MIN (fired $N times)"
+grep -q 'last run: worked; next check in 0m1s' "$TMPROOT/pacing.out" \
+  || fail "worked firing did not schedule the post-work wait: $(cat "$TMPROOT/pacing.out")"
+N="$(STUB_RESULT=idle count_firings)"
+[ "$N" -eq 1 ] || fail "an idle firing should wait MIN or longer, not the post-work wait (fired $N times)"
+grep -q 'last run: idle; next check in 120m0s' "$TMPROOT/pacing.out" \
+  || fail "idle firing did not back off from MIN: $(cat "$TMPROOT/pacing.out")"
+unset CLAUDE_TASKS_WORKED_WAIT
+# The default post-work wait is short -- well under a minute.
+STUB_RESULT=worked count_firings >/dev/null
+grep -q 'last run: worked; next check in 0m15s' "$TMPROOT/pacing.out" \
+  || fail "default post-work wait is not 15s: $(cat "$TMPROOT/pacing.out")"
 
 # --once is an explicit "run now", so it never consults the pre-check.
 rm -f "$CAPTURED_PROMPT"

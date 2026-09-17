@@ -5,7 +5,7 @@ command you can watch and stop. Each firing is a fresh Claude Code session
 (`claude -p`), so no context accumulates — all state lives in Todoist and the
 vault, and every run re-surveys the queue from scratch.
 
-    ./claude-tasks-loop.sh                  # adaptive pacing, 5m..30m
+    ./claude-tasks-loop.sh                  # adaptive pacing: 15s after work, else 5m..30m
     ./claude-tasks-loop.sh 2m 1h            # custom min / max wait
     ./claude-tasks-loop.sh --once
     ./claude-tasks-loop.sh --profile work   # a profile is required; there is no default
@@ -191,8 +191,14 @@ and exits `0` to fire, `10` to skip:
     ./claude-tasks-check.sh; echo $?
 
 **Pacing** is adaptive: the skill ends each loop-mode report with
-`CLAUDE_TASKS_RESULT: worked` or `idle`. After `worked` the next tick is `min`
-later; after `idle` the wait doubles, capped at `max`. A run with no marker
+`CLAUDE_TASKS_RESULT: worked` or `idle`. After `worked` the next tick comes
+almost at once — `CLAUDE_TASKS_WORKED_WAIT` later, 15s by default (sleep(1)
+syntax, `0` for none) — since a firing works one task and a long queue
+shouldn't sit for `min` between them; if nothing is left, the pre-check skips
+that tick for free. The short wait still leaves a moment to Ctrl-C between
+firings, and bounds how fast a firing that keeps reporting `worked` without
+making progress can repeat. `worked` also resets the backoff to `min`; after
+`idle` the wait doubles from there, capped at `max`. A run with no marker
 (crash, denied tools) counts as idle and logs a warning, so a broken setup
 backs off instead of hammering. A *skipped* tick costs nothing, so it earns no
 backoff and the wait stays at `min` — backoff exists to stop idle **firings**
