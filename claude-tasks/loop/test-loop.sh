@@ -47,6 +47,9 @@ printf '%s' "\${TODOIST_CLAUDE_API_TOKEN:-}" > "$TMPROOT/captured-token.txt"
 env | grep -E '^(CLAUDE_TASKS_|TODOIST_)' | sort > "$TMPROOT/captured-env.txt"
 echo "stub claude ran"
 echo x >> "$TMPROOT/firings.txt"
+# STUB_PREAMBLE lets a test put lines ahead of the marker -- e.g. the
+# conversation a stream-json log replays, skill text and all.
+[ -n "\${STUB_PREAMBLE:-}" ] && printf '%s\n' "\$STUB_PREAMBLE"
 echo "CLAUDE_TASKS_RESULT: \${STUB_RESULT:-worked}"
 EOF
 chmod +x "$STUBDIR/claude"
@@ -207,6 +210,17 @@ N="$(STUB_RESULT=idle count_firings)"
 [ "$N" -eq 1 ] || fail "an idle firing should wait MIN or longer, not the post-work wait (fired $N times)"
 grep -q 'last run: idle; next check in 120m0s' "$TMPROOT/pacing.out" \
   || fail "idle firing did not back off from MIN: $(cat "$TMPROOT/pacing.out")"
+# The marker is the firing's OWN verdict, and only its last one: a
+# stream-json log replays the skill instructions, which quote
+# `CLAUDE_TASKS_RESULT: worked` in prose, and reading that as the outcome
+# paced every firing at the post-work wait and killed the idle backoff
+# (2026-09-17).
+PREAMBLE='{"type":"user","message":{"role":"user","content":[{"type":"text","text":"End with `CLAUDE_TASKS_RESULT: worked` if the firing changed anything."}]}}
+I would say CLAUDE_TASKS_RESULT: worked here if anything had changed.'
+N="$(STUB_PREAMBLE="$PREAMBLE" STUB_RESULT=idle count_firings)"
+[ "$N" -eq 1 ] || fail "a quoted 'worked' in the replayed conversation was read as the outcome (fired $N times)"
+grep -q 'last run: idle; next check in 120m0s' "$TMPROOT/pacing.out" \
+  || fail "quoted marker text overrode the firing's own idle marker: $(cat "$TMPROOT/pacing.out")"
 unset CLAUDE_TASKS_WORKED_WAIT
 # The default post-work wait is short -- well under a minute.
 STUB_RESULT=worked count_firings >/dev/null

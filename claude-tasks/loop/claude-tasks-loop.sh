@@ -206,6 +206,57 @@ for line in sys.stdin:
 '
 }
 
+# The outcome marker from a firing's log: "worked", "idle", or empty when the
+# firing emitted none. Only the firing's OWN report counts -- assistant text
+# and the final `result` -- and the LAST marker in it wins. A stream-json log
+# replays the whole conversation, including the skill instructions that quote
+# `CLAUDE_TASKS_RESULT: worked` in prose, so a grep over the raw log said
+# "worked" for every firing and the idle backoff never engaged. Thinking
+# blocks, tool results and user/system messages are ignored for the same
+# reason; plain (non-JSON) logs are the report as printed, so they count.
+read_marker() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, re, sys
+
+marker = re.compile(r"^[ \t]*`?CLAUDE_TASKS_RESULT:[ \t]*(worked|idle)\b", re.M)
+
+def reported(path):
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line.startswith("{"):
+                yield line
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if ev.get("type") == "result":
+                if isinstance(ev.get("result"), str):
+                    yield ev["result"]
+            elif ev.get("type") == "assistant":
+                for block in ev.get("message", {}).get("content", []):
+                    if block.get("type") == "text":
+                        yield block.get("text", "")
+
+found = ""
+for chunk in reported(sys.argv[1]):
+    for m in marker.finditer(chunk):
+        found = m.group(1)
+print(found)
+' "$1"
+  else
+    # No python3 (the verbose feed needs it too, so this is a bare-bones
+    # machine): drop the replayed conversation turns and take the last
+    # marker that is still at the start of a line -- cruder, but it can't
+    # read the skill text in the user message as this firing's outcome.
+    grep -v '"type":"user"' "$1" 2>/dev/null \
+      | grep -oE '(^|\\n)`?CLAUDE_TASKS_RESULT: *(worked|idle)' \
+      | grep -oE '(worked|idle)' | tail -n 1
+  fi
+}
+
 # sleep(1)-style duration -> seconds (e.g. 90, 5m, 2h)
 to_seconds() {
   local d="$1" n="${1%[smhd]}"
@@ -255,12 +306,12 @@ fire() {
   # keep the last 200 session logs
   ls -1t "$LOGDIR"/*.log 2>/dev/null | tail -n +201 | xargs -r rm -f
 
-  # Outcome marker, read back from the log (works for plain and stream-json output).
-  if grep -q 'CLAUDE_TASKS_RESULT: *worked' "$log"; then
-    LAST_RESULT=worked
-  elif grep -q 'CLAUDE_TASKS_RESULT: *idle' "$log"; then
-    LAST_RESULT=idle
-  else
+  # Outcome marker, read back from the log -- from the firing's OWN report
+  # only (see read_marker). A plain grep over the whole log used to match
+  # "worked" on every stream-json firing, because the log replays the skill's
+  # instructions, which quote the marker: the loop then never backed off.
+  LAST_RESULT="$(read_marker "$log")"
+  if [ -z "$LAST_RESULT" ]; then
     LAST_RESULT=unknown
     echo "$(date -Is) warning: no CLAUDE_TASKS_RESULT marker in output; treating as idle" | tee -a "$log"
   fi

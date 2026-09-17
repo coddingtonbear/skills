@@ -200,7 +200,14 @@ firings, and bounds how fast a firing that keeps reporting `worked` without
 making progress can repeat. `worked` also resets the backoff to `min`; after
 `idle` the wait doubles from there, capped at `max`. A run with no marker
 (crash, denied tools) counts as idle and logs a warning, so a broken setup
-backs off instead of hammering. A *skipped* tick costs nothing, so it earns no
+backs off instead of hammering.
+
+The marker is read from the firing's **own report** — its assistant text and
+the final `result`, last marker wins — not from the log as a whole. A
+stream-json log (`CLAUDE_TASKS_VERBOSE=1`) replays the entire conversation,
+and the skill's instructions quote `CLAUDE_TASKS_RESULT: worked` in prose, so
+grepping the raw log said `worked` for every firing and the idle backoff never
+engaged. A *skipped* tick costs nothing, so it earns no
 backoff and the wait stays at `min` — backoff exists to stop idle **firings**
 burning tokens, and still does whenever the pre-check is off or failing open.
 The practical effect is that a queue nobody has touched is watched cheaply
