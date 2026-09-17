@@ -7,9 +7,7 @@ description: >-
   Code extension, and the `mrsf` CLI. Use whenever a note has a
   `.review.yaml` sidecar, when a user asks to comment on, annotate, review, or
   suggest edits to a note that uses Sidemark, or when a user asks to reply to,
-  resolve, accept, or decline a Sidemark comment or suggestion. For notes that
-  carry a `tandem-comments` block and no sidecar, use obsidian-tandem-comments
-  instead.
+  resolve, accept, or decline a Sidemark comment or suggestion.
 ---
 
 # Sidemark comments: MRSF review sidecars
@@ -24,17 +22,18 @@ time the note changes is when a suggestion is accepted.
 Sidemark watches both files, so anything written to the sidecar shows up in
 Obsidian's editor and sidebar immediately.
 
-## Which skill applies
+## Telling that a note uses Sidemark
 
-- A note with a `.review.yaml` sidecar, or a vault that uses Sidemark: this
-  skill.
-- A note with a ```` ```tandem-comments ```` block at the end and no sidecar:
-  obsidian-tandem-comments. Don't convert it yourself. Sidemark's settings
-  have a conversion button (and a command) that turns every Tandem block into
-  a sidecar, and the user runs it.
-- Asked to comment on a note that has neither: ask which format they want
-  unless the vault already has `.review.yaml` files, in which case use
-  Sidemark.
+- **A `<note>.md.review.yaml` file beside the note** is the direct signal: the
+  note has Sidemark comments, and this skill applies.
+- **No sidecar on the note, but the vault uses Sidemark** — other
+  `.review.yaml` files exist in it, or it has a
+  `.obsidian/plugins/sidemark/` directory — means Sidemark is the vault's
+  convention. Comment by creating the note's first sidecar (see Writing to
+  the sidecar).
+- **Neither** means nothing says this vault keeps comments in sidecars. Ask
+  before writing one into it, in case the user's comments live somewhere
+  else.
 
 ## The file
 
@@ -91,7 +90,6 @@ relative to the vault root), `comments` (a flat list; threads are formed by
 | --- | --- |
 | `x_prefix` / `x_suffix` | Up to 20 characters immediately before and after the quote (fewer at the start or end of the file; they may cross line breaks). They tell identical quotes apart, like a W3C TextQuoteSelector's `prefix`/`suffix`. |
 | `x_suggestion` | `{ replacement, result? }` on a root comment with `type: suggestion`. `replacement` is the proposed text; an **empty `replacement` proposes deleting** the passage. `result` is `accepted` or `declined` once decided. The root's `text` is the optional explanation. |
-| `x_tandem_id` | The original id of a comment converted from Tandem Comments. |
 | `x_reanchor_status`, `x_reanchor_score` | Written by `mrsf reanchor`. Leave them. |
 
 Keep every field you don't recognize. Other MRSF tools write their own
