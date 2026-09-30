@@ -255,8 +255,8 @@ than polling for a sidecar file.
 ## Step 8: Open the note, then confirm — don't restate
 
 1. Open the note in Obsidian with `open_file`, passing the vault-relative
-   path (e.g. `code-review/Fix ⁄ retry logic.md`) so the user lands on it
-   without having to navigate there themselves.
+   path (e.g. `code-review/Fix ⁄ retry logic.md`) and `newLeaf: true` so it
+   opens in a new pane rather than replacing whatever the user has open.
 2. Reply in chat with only a short confirmation: the note's vault-relative
    path, plus a clickable `obsidian://` link so the user can jump straight
    back to it later. The vault is at `/home/acoddington/Documents/Notes`, so
