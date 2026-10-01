@@ -44,6 +44,13 @@ depends on.
 3. Capture the findings yourself as you generate them. Do not call
    `ReportFindings` and do not print the review in chat — the whole point of
    this skill is that the review is read in Obsidian, not here.
+4. For each finding that describes an actual bug or runtime problem (not a
+   style/simplification/reuse/architecture-only observation), trace out its
+   concrete local-repro path while you still have the failure scenario fresh
+   from investigating it — the starting preconditions, the exact inputs or
+   actions, and the buggy-vs-expected result — rather than leaving it to be
+   reconstructed from memory at write-up time in Step 6. Note it down
+   alongside the finding as you go.
 
 ## Step 3: Fetch and compare against the Jira issue
 
@@ -180,6 +187,19 @@ worth drawing. When in doubt, do it: it's cheap relative to the review itself.
        otherwise report via `ReportFindings` (file:line references, the
        concrete failure scenario, why it matters), just not a numbered list
        item anymore.
+     - `### Reproduction Steps` — for a finding that describes an actual bug
+       or runtime problem (not a style/simplification/reuse/architecture-only
+       observation), a numbered list of concrete steps to hit the problem in
+       a local dev environment: starting preconditions/setup, the exact
+       inputs or actions to take (real values, routes, commands, requests, or
+       UI actions — not "trigger the edge case"), and the observed (buggy)
+       result versus the expected (correct) one. Write it so someone with no
+       memory of this review could follow it literally and land on the same
+       bug. Use the repro path you already traced for this finding in Step
+       2.4 rather than reconstructing it from memory now. Omit this
+       subsection when there's nothing to reproduce (a simplification/reuse
+       suggestion, a style nit, an architectural observation with no
+       concrete failure).
      - `### Suggested Comments` — one block per distinct file/line the
        finding touches, in the form:
        ```
