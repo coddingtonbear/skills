@@ -18,10 +18,11 @@ the user reads and questions the review. This skill starts a live background
 watch on Sidemark's event stream for that back-and-forth itself (Step 7)
 rather than waiting to be asked.
 
-**Requirements:** `gh` CLI, Jira (Atlassian) MCP tools, and the Obsidian MCP
+**Requirements:** `gh` CLI, Jira (Atlassian) MCP tools, the Obsidian MCP
 tools — including `open_file`, Sidemark's comment tools (`comments_list`,
 `comments_reply`, …), and `events_get_listener_url`, which Step 7's watch
-depends on.
+depends on — and the `EnterWorktree`/`ExitWorktree` tools, which Step 1.3's
+temporary worktree and Step 10's cleanup depend on.
 
 ---
 
@@ -32,6 +33,18 @@ depends on.
    per **git-and-pr-conventions**, if you need the diff itself.
 2. If there's no open PR for the current branch, stop and tell the user — do
    not guess a target.
+3. Create a temporary worktree for this review and switch into it, so the
+   review and the potentially hours-long comment watch (Steps 7–9) run in
+   their own checkout instead of tying up your main one while you work on
+   something else:
+   - The PR's branch is likely already checked out in your main working
+     tree (it's the current branch), so check out its current commit
+     detached rather than by branch name, e.g.
+     `git fetch origin <headRefName> && git worktree add --detach
+     .claude/worktrees/pr-review-<PR number> FETCH_HEAD`.
+   - Switch the session into it with `EnterWorktree({path: "<path above>"})`
+     so the rest of this skill (Steps 2–9) runs from there. Remember this
+     path — Step 10 removes it.
 
 ## Step 2: Run the code review
 
