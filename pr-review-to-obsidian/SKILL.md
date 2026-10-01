@@ -284,6 +284,13 @@ than polling for a sidecar file.
    question about the review: investigate the actual code/PR to give a real,
    checked answer rather than restating the finding text, the same way you
    would in chat. Reply with `comments_reply`, as `author: "Claude"`.
+6. Don't re-arm forever on silence alone. If you've re-armed the watch
+   repeatedly (per Step 7.3) with no activity across several hours, stop and
+   ask the user whether they're done with this review before arming it
+   again, instead of continuing to watch indefinitely unasked. A "yes" (or
+   the user independently saying they're done with this PR review at any
+   other point in the conversation) means stop watching and move to Step 10;
+   a "no" or no response either way means just re-arm as usual.
 
 ## Step 8: Open the note, then confirm — don't restate
 
@@ -320,6 +327,23 @@ without the user needing to ask. Keep it armed (per Step 7.3) for the rest of
 the conversation. Follow **sidemark-comments** for reading, replying to, and
 resolving threads; no other special handling is needed beyond that skill's
 normal behavior.
+
+## Step 10: Wrapping up
+
+Reached either because the quiet-watch check in Step 7.6 got a "yes, I'm
+done" answer, or because the user said as much unprompted at any other point
+in the conversation.
+
+1. Stop watching: let the current Monitor watch lapse rather than re-arming
+   it (or stop it outright if it's still running and you don't want to wait
+   for its window to close).
+2. Remove the Step 1.3 worktree: it was entered with `path`, so
+   `ExitWorktree({action: "keep"})` only returns the session to your
+   original working directory — it will not delete the worktree itself.
+   Follow that with `git worktree remove <the path from Step 1.3>` to
+   actually delete it.
+3. Confirm in chat, briefly, that you've stopped watching and cleaned up the
+   worktree.
 
 ---
 
