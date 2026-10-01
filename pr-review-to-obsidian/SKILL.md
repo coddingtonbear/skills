@@ -224,6 +224,14 @@ worth drawing. When in doubt, do it: it's cheap relative to the review itself.
        multiple locations one block per location. Omit this subsection only
        when there's genuinely no actionable inline comment to suggest (e.g.
        a purely architectural observation already covered in Step 4).
+       Strongly prefer a line that's actually within the PR's diff (a
+       changed line, or a line in the diff's surrounding context) — the user
+       can only place an inline comment on a line near the diff, not one far
+       outside it. When a finding is really about an untouched line well
+       away from the diff, point the comment at the nearest in-diff line
+       instead (e.g. the touched line that calls the problematic code, or
+       the top of the changed hunk) and say in the comment text itself where
+       the actual problem lives.
      - `### Resolution` — always exactly:
        ```
        - [ ] Reviewed
