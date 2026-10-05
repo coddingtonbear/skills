@@ -387,8 +387,10 @@ than polling for a sidecar file.
    back-and-forth. The URL it returns is signed, so nothing downstream needs
    the API key.
 2. Launch the stream with the **Monitor** tool (a live background watch, not a
-   one-shot check) with a description naming the note. Each message's `data:`
-   is a JSON object carrying `path`, `id`, `thread`, `author`, `timestamp` and
+   one-shot check) with a description naming the note and `timeout_ms:
+   1800000` — Monitor's hard cap, so each watch runs the longest it can and
+   you re-arm (step 3) as rarely as possible. Each message's `data:` is a
+   JSON object carrying `path`, `id`, `thread`, `author`, `timestamp` and
    `text`. Filter out the keepalives, or every heartbeat becomes its own
    notification for the length of the watch:
 
@@ -405,7 +407,14 @@ than polling for a sidecar file.
    `ttlSeconds`; past that — or after Obsidian restarts, which drops every
    subscription — get a fresh URL from `events_get_listener_url` first. Keep
    re-arming for as long as this review conversation continues. Stop only when
-   the user says to, or the session ends.
+   the user says to, or the session ends. The old watch's connection is dead
+   for however long it takes you to notice the expiry and re-arm, and nothing
+   is buffered or replayed for that gap (unlike the epoch case in the next
+   step, which only covers events the filter itself dropped) — so before
+   resuming the wait on every re-arm, `comments_list` the note and handle
+   anything with a timestamp after the last event you actually saw, so a
+   comment posted mid-gap doesn't sit unanswered until something else
+   happens to prompt a check.
 4. A change of epoch in an event's `id:` means messages were missed and
    nothing is replayed; `comments_list` the note to catch up. A **gap in the
    counter does not**, as long as you are filtering on `author`: the counter
