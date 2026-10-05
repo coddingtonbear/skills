@@ -47,16 +47,27 @@ prompt, and the profiles folder via `--add-dir` — that is the whole
 hand-off, so a firing needs no `settings.json` entry to know which profile
 it is.
 
-**Worktrees.** Under the work profile the checkout is your own development
-environment, so a task works in a temporary git worktree unless you label it
-`claude-devenv` (the skill's *Workspaces* section). The loop creates the
-worktrees directory at launch — the profile's `CLAUDE_TASKS_WORKTREES`,
-`<root>/.claude-tasks-worktrees` by default — passes it as `--add-dir` so the
-firing can work there without prompts, names it in the prompt, and exports
-the resolved path as `CLAUDE_TASKS_WORKTREES`. A root override from the
-environment moves the default along with it (a scratch root never sends
-worktrees into the real projects folder); an explicit `CLAUDE_TASKS_WORKTREES`
-in the environment wins over both. (A `settings.json` `env`
+**Worktrees.** Under both profiles a task works in a temporary git worktree
+rather than your checkout, unless you label it `claude-devenv` (the skill's
+*Workspaces* section) — a firing usually runs while you're elsewhere, so it
+stays out of the tree you may be sitting in. Where those worktrees go is the
+profile's `CLAUDE_TASKS_WORKTREES`, in one of two layouts, and the loop names
+it in the prompt and exports the resolved value either way:
+
+- `in-clone` (personal): `<checkout>/.worktrees/<branch>`, inside the clone
+  itself. There's no directory to create and no extra `--add-dir` — the
+  checkouts are already under the root the firing works from — and the same
+  paths work in an interactive session started in the repo. The firing adds
+  `/.worktrees/` to that clone's `.git/info/exclude`, so the directory stays
+  out of your `git status` without touching the repo's `.gitignore`.
+- a directory path (work): `<dir>/<repo>/<branch>`. The loop creates the
+  directory at launch and passes it as `--add-dir` so the firing can work
+  there without prompts. A root override from the environment moves the
+  default along with it (a scratch root never sends worktrees into the real
+  projects folder).
+
+An explicit `CLAUDE_TASKS_WORKTREES` in the environment wins over the profile
+in both cases. (A `settings.json` `env`
 block would not have helped the launch anyway: Claude Code injects it into
 its own sessions, never into the shell that runs this script.)
 

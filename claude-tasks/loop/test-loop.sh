@@ -115,26 +115,30 @@ LOGDIR="$XDG_STATE_HOME/claude-tasks-loop/personal"
 [ -z "$(ls "$LOGDIR"/run-*.md 2>/dev/null || true)" ] || fail "found a local run-*.md -- run notes now live in the vault, not $LOGDIR"
 
 # --- worktrees --------------------------------------------------------------
-# The firing is handed a worktrees directory: created at launch, reachable
-# without prompts (--add-dir), named in the prompt and the environment. With
-# the root overridden from the environment (as this whole test does) and no
-# CLAUDE_TASKS_WORKTREES override, it follows the root rather than the
-# profile's spelling of it -- a scratch root must never send worktrees into
-# the real ~/Documents/Projects.
+# The personal profile uses the in-clone layout: worktrees live inside each
+# checkout (<checkout>/.worktrees/<branch>), so there is no shared directory
+# to create and nothing extra to pass as --add-dir -- the checkouts are
+# already covered by --add-dir "$ROOT". The prompt and the environment still
+# say which layout the firing is working in.
 add_dirs() { awk 'prev == "--add-dir" { print } { prev = $0 }' "$TMPROOT/captured-args.txt"; }
-WT_EXPECTED="$CLAUDE_TASKS_ROOT/.claude-tasks-worktrees"
-[ -d "$WT_EXPECTED" ] || fail "launch did not create the worktrees dir $WT_EXPECTED"
-add_dirs | grep -qx "$WT_EXPECTED" || fail "firing was not given --add-dir $WT_EXPECTED (got: $(add_dirs | tr '\n' ' '))"
-grep -q "Temporary worktrees .* go under $WT_EXPECTED" "$CAPTURED_PROMPT" \
-  || fail "prompt does not name the worktrees dir"
-grep -q "^CLAUDE_TASKS_WORKTREES=$WT_EXPECTED\$" "$TMPROOT/captured-env.txt" \
-  || fail "firing did not inherit CLAUDE_TASKS_WORKTREES=$WT_EXPECTED"
-# An explicit CLAUDE_TASKS_WORKTREES in the environment wins over both.
+[ ! -e "$CLAUDE_TASKS_ROOT/.claude-tasks-worktrees" ] \
+  || fail "in-clone layout still created a shared worktrees dir under the root"
+if add_dirs | grep -qx in-clone; then fail "in-clone was passed as a literal --add-dir path"; fi
+grep -q "Temporary worktrees .* go in each clone's own .worktrees directory" "$CAPTURED_PROMPT" \
+  || fail "prompt does not describe the in-clone worktree layout"
+grep -q "^CLAUDE_TASKS_WORKTREES=in-clone\$" "$TMPROOT/captured-env.txt" \
+  || fail "firing did not inherit CLAUDE_TASKS_WORKTREES=in-clone"
+# An explicit CLAUDE_TASKS_WORKTREES directory in the environment wins over
+# the profile, and gets the directory treatment: created at launch, reachable
+# without prompts (--add-dir), named in the prompt and the environment. This
+# is also the layout the work profile ships with.
 rm -f "$CAPTURED_PROMPT"
 env CLAUDE_TASKS_WORKTREES="$TMPROOT/wt-override" "$HERE/claude-tasks-loop.sh" --profile personal --once >/dev/null 2>&1 \
   || fail "launch with CLAUDE_TASKS_WORKTREES override failed"
 [ -d "$TMPROOT/wt-override" ] || fail "worktrees override dir was not created"
 add_dirs | grep -qx "$TMPROOT/wt-override" || fail "worktrees override was not passed as --add-dir"
+grep -q "Temporary worktrees .* go under $TMPROOT/wt-override" "$CAPTURED_PROMPT" \
+  || fail "prompt does not name the overridden worktrees dir"
 grep -q "^CLAUDE_TASKS_WORKTREES=$TMPROOT/wt-override\$" "$TMPROOT/captured-env.txt" \
   || fail "worktrees override was not exported to the firing"
 

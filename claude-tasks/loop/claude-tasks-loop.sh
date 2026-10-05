@@ -86,12 +86,17 @@ ENV_WORKTREES="${CLAUDE_TASKS_WORKTREES:-}"
 # shellcheck disable=SC1090
 . "$PROFILE_FILE"
 ROOT="${ENV_ROOT:-${CLAUDE_TASKS_ROOT:-}}"
-# Where a firing puts temporary worktrees (the skill's Workspaces section).
-# The profile's value is spelled in terms of its own root, so a root
-# override from the environment moves the worktrees along with it unless
-# the environment names them too.
+# Where a firing puts temporary worktrees (the skill's Workspaces section):
+# either the literal `in-clone` -- <checkout>/.worktrees/<branch>, inside
+# each clone -- or a directory holding <repo>/<branch> beneath it. A
+# directory spelled by the profile is spelled in terms of its own root, so a
+# root override from the environment moves the worktrees along with it
+# unless the environment names them too; `in-clone` follows every root by
+# construction, so an override leaves it alone.
 if [ -n "$ENV_WORKTREES" ]; then
   WORKTREES="$ENV_WORKTREES"
+elif [ "${CLAUDE_TASKS_WORKTREES:-}" = in-clone ]; then
+  WORKTREES=in-clone
 elif [ -n "$ENV_ROOT" ]; then
   WORKTREES="$ROOT/.claude-tasks-worktrees"
 else
@@ -102,8 +107,18 @@ TOKEN_VAR="${ENV_TOKEN_VAR:-${CLAUDE_TASKS_TOKEN_VAR:-TODOIST_CLAUDE_API_TOKEN}}
 [ -n "$BOT_USER" ] || { echo "profile $PROFILE: CLAUDE_TASKS_BOT_USER is empty; fill it in $PROFILE_FILE" >&2; exit 2; }
 [ -n "$ROOT" ]     || { echo "profile $PROFILE: CLAUDE_TASKS_ROOT is empty; fill it in $PROFILE_FILE" >&2; exit 2; }
 [ -d "$ROOT" ]     || { echo "profile $PROFILE: root $ROOT is not a directory" >&2; exit 2; }
-mkdir -p "$WORKTREES" || { echo "profile $PROFILE: cannot create worktrees dir $WORKTREES" >&2; exit 2; }
-WORKTREES="$(cd "$WORKTREES" && pwd)"   # absolute: the firing gets it via --add-dir
+# `in-clone` worktrees live under the checkouts, so they are already inside
+# --add-dir "$ROOT" and there is no directory to create up front; a
+# directory layout needs both.
+if [ "$WORKTREES" = in-clone ]; then
+  WORKTREES_ADD_DIR=()
+  WORKTREES_SAY="in each clone's own .worktrees directory (<checkout>/.worktrees/<branch>)"
+else
+  mkdir -p "$WORKTREES" || { echo "profile $PROFILE: cannot create worktrees dir $WORKTREES" >&2; exit 2; }
+  WORKTREES="$(cd "$WORKTREES" && pwd)"   # absolute: the firing gets it via --add-dir
+  WORKTREES_ADD_DIR=(--add-dir "$WORKTREES")
+  WORKTREES_SAY="under $WORKTREES"
+fi
 case "$TOKEN_VAR" in
   ""|*[!A-Za-z0-9_]*) echo "profile $PROFILE: bad CLAUDE_TASKS_TOKEN_VAR '$TOKEN_VAR'" >&2; exit 2 ;;
 esac
@@ -114,7 +129,7 @@ PROFILE_FILE="$PROFILE_DIR/$PROFILE.env"
 # below, is the whole hand-off: a firing needs nothing from a settings.json
 # env block to know who it is.
 export CLAUDE_TASKS_PROFILE="$PROFILE" CLAUDE_TASKS_TOKEN_VAR="$TOKEN_VAR"
-# The resolved worktrees path too: the skill treats the environment's value
+# The resolved worktrees value too: the skill treats the environment's value
 # as authoritative over the profile text, exactly as it does for the root.
 export CLAUDE_TASKS_WORKTREES="$WORKTREES"
 
@@ -160,7 +175,7 @@ else
 fi
 unset TOKEN
 
-PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Active claude-tasks profile: $PROFILE — read $PROFILE_FILE first; it names the accounts you are (Todoist $BOT_USER, and the GitHub identity mode). Your queue is every project shared with your Todoist account ($BOT_USER) and every task in them assigned to you — accept pending invitations first, then survey and work one task; end with the CLAUDE_TASKS_RESULT marker. Temporary worktrees (per the skill's Workspaces section) go under $WORKTREES. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
+PROMPT="Let's get started on your claude tasks (loop mode, headless firing). Active claude-tasks profile: $PROFILE — read $PROFILE_FILE first; it names the accounts you are (Todoist $BOT_USER, and the GitHub identity mode). Your queue is every project shared with your Todoist account ($BOT_USER) and every task in them assigned to you — accept pending invitations first, then survey and work one task; end with the CLAUDE_TASKS_RESULT marker. Temporary worktrees (per the skill's Workspaces section) go $WORKTREES_SAY. Loop run note (per the skill's Loop mode Run log section — create it if missing, append a brief timestamped line when you work a task, get every timestamp from \`date\`): vault path $RUN_NOTE. This launch started at $LAUNCH_STARTED."
 
 # Tools a headless run may use without prompting. Anything else is denied and
 # the run is expected to report it as a NEEDS: unblock. Extend as needed.
@@ -294,7 +309,7 @@ fire() {
       --permission-mode acceptEdits \
       --allowedTools "$ALLOWED_TOOLS" \
       --add-dir "$ROOT" \
-      --add-dir "$WORKTREES" \
+      ${WORKTREES_ADD_DIR[@]+"${WORKTREES_ADD_DIR[@]}"} \
       --add-dir "$LOGDIR" \
       --add-dir "$PROFILE_DIR" \
       "${MODEL_ARGS[@]}" \
@@ -317,7 +332,7 @@ fire() {
   fi
 }
 
-echo "$(date -Is) profile: $PROFILE ($BOT_USER, root $ROOT, worktrees $WORKTREES); run note: $RUN_NOTE (vault, started $LAUNCH_STARTED)"
+echo "$(date -Is) profile: $PROFILE ($BOT_USER, root $ROOT, worktrees $WORKTREES_SAY); run note: $RUN_NOTE (vault, started $LAUNCH_STARTED)"
 
 trap 'echo; echo "loop stopped"; exit 0' INT TERM
 
