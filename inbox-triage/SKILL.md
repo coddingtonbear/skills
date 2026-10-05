@@ -181,6 +181,12 @@ Follow **obsidian-formatting**; all vault access via `mcp__obsidian__*` tools.
   classification, via `vault_patch` (heading target, `append`,
   `createTargetIfMissing: true` so the section is created in an empty note) —
   never a whole-file write over an existing note.
+  **Heading levels in `vault_patch` content are relative to the target**: a
+  leading `#` becomes a direct child of the target heading, so write each
+  entry heading as `# <Composed title>` in the patch payload — it lands in the
+  file as `##`. Passing `##` produces `###` (happened 2026-10-02; fixed by
+  re-replacing the section). The `target` must be a JSON array of heading
+  texts, e.g. `["Discoveries"]`, not a bare string.
 - **Block format** — match the existing desktop-clipped entries exactly:
 
       ## <Composed title>
