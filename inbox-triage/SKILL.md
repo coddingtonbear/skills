@@ -77,6 +77,33 @@ before concluding the cookies are the problem.
   The `base` model transcribed a 48 s reel in ~11 s and is accurate; only
   reach for a bigger model if the result is visibly garbled. Omit
   `--language` unless the language is known — whisper auto-detects.
+- **On-screen text** — when caption and transcript don't carry the substance
+  (a music reel with no speech, a "tracks to play" list, a recipe or tool
+  shown rather than said), read it off the frames. Reels often flash the
+  track/artist, product name, or key points as text overlays. The user wants
+  these named — "open the reel to hear it" is not an acceptable entry. Fetch
+  the video (the `-x` download above is audio only):
+
+      yt-dlp --cookies-from-browser firefox --no-playlist -f "b[ext=mp4]/b" \
+        -o "<scratchpad>/<shortcode>.video.%(ext)s" "<reel-url>"
+
+  First get an overview contact sheet (one frame every 2 s, 8 across) and
+  `Read` it as an image to see where the text sits and how often it changes:
+
+      ffmpeg -i <video> -vf "fps=1/2,scale=270:-1,tile=8x2" -frames:v 1 <scratchpad>/sheet.jpg
+
+  Overview tiles are too small to read reliably, and labels that change about
+  once a second get skipped at that rate. So make a second sheet: crop to just
+  the text band (fractions of `ih` picked from the overview), sample at
+  `fps=2`, and stack vertically so every label is big enough to read:
+
+      ffmpeg -i <video> -vf "fps=2,crop=iw:ih*0.13:0:ih*0.39,scale=600:-1,tile=4x16" -frames:v 1 <scratchpad>/labels.jpg
+
+  Raise the tile row count if the reel is longer than ~32 s at 2 fps. On
+  2026-10-08 this pulled all 27 tracks from a 30 s "night out in NYC" reel
+  and the track from a speechless deep-house clip. Write the extracted list
+  into the entry as a bullet list and say the names
+  were read from on-screen labels.
 - Cookie extraction reads the Firefox profile; if the permission system blocks
   it, ask the user to approve that command rather than degrading silently.
 - On any failure: keep caption if it was obtained, mark the missing piece, and
