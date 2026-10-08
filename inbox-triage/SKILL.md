@@ -104,6 +104,20 @@ before concluding the cookies are the problem.
   and the track from a speechless deep-house clip. Write the extracted list
   into the entry as a bullet list and say the names
   were read from on-screen labels.
+- **Music → like it on Spotify.** Every track identified in a reel — from
+  on-screen labels, the caption, or the transcript — gets liked on Spotify
+  (user instruction, 2026-10-08). For each track, call the Spotify
+  connector's `search` with `"<title> <artist>"`, then **check the result's
+  artist and title against what the reel named** before saving: covers,
+  remixes, karaoke versions and same-title songs by other artists are common
+  near-misses. Only on a match, call `save_to_library` with the exact
+  `spotify:track:` URI the search returned — never a guessed or constructed
+  URI. No confident match → don't like it; list it as unmatched. If the
+  connector reports it needs authentication, stop liking, tell the user to
+  reconnect Spotify in connector settings, and list the tracks still to like.
+  The daily-note entry is written either way; mark liked tracks in it (a
+  trailing `♥` on each bullet). Liking happens only in a real run — a dry run
+  lists the matches it would like.
 - Cookie extraction reads the Firefox profile; if the permission system blocks
   it, ask the user to approve that command rather than degrading silently.
 - On any failure: keep caption if it was obtained, mark the missing piece, and
@@ -236,7 +250,9 @@ Follow **obsidian-formatting**; all vault access via `mcp__obsidian__*` tools.
   open.
 - End with a per-item report: title → daily note and section, what substance
   was obtained (transcript / caption / excerpt / annotation-only), and whether
-  it was completed, left open, or skipped as non-content.
+  it was completed, left open, or skipped as non-content. For music reels,
+  also report how many tracks were liked on Spotify and any left unmatched
+  or not yet liked.
 
 ## Dry run
 
