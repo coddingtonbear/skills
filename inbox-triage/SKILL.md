@@ -104,24 +104,61 @@ before concluding the cookies are the problem.
   and the track from a speechless deep-house clip. Write the extracted list
   into the entry as a bullet list and say the names
   were read from on-screen labels.
-- **Music → like it on Spotify.** Every track identified in a reel — from
-  on-screen labels, the caption, or the transcript — gets liked on Spotify
-  (user instruction, 2026-10-08). For each track, call the Spotify
-  connector's `search` with `"<title> <artist>"`, then **check the result's
-  artist and title against what the reel named** before saving: covers,
-  remixes, karaoke versions and same-title songs by other artists are common
-  near-misses. Only on a match, call `save_to_library` with the exact
-  `spotify:track:` URI the search returned — never a guessed or constructed
-  URI. No confident match → don't like it; list it as unmatched. If the
-  connector reports it needs authentication, stop liking, tell the user to
-  reconnect Spotify in connector settings, and list the tracks still to like.
-  The daily-note entry is written either way; mark liked tracks in it (a
-  trailing `♥` on each bullet). Liking happens only in a real run — a dry run
-  lists the matches it would like.
+- Any songs found this way go into a playlist — see *Music → a Spotify
+  playlist* below.
 - Cookie extraction reads the Firefox profile; if the permission system blocks
   it, ask the user to approve that command rather than degrading silently.
 - On any failure: keep caption if it was obtained, mark the missing piece, and
   still write the entry — metadata plus annotation is the guaranteed floor.
+
+### Music → a Spotify playlist
+
+When an item recommends songs — a reel's track list, a caption naming a song,
+an article's playlist — make **one new Spotify playlist per item** holding
+those songs, even when there is only one (user instruction, 2026-10-09). Use
+the `spogo` CLI with its OAuth login (`--auth oauth`); the Spotify MCP
+connector is abandoned.
+
+1. **Match each song.** `spogo --auth oauth --json search track "<title> <artist>" --limit 5`
+   and **check the result's `name` and `artists` against what the item
+   named** before using it: remixes, covers, karaoke versions and same-title
+   songs by other artists are common near-misses (searching "Nightcall
+   Kavinsky" returned a remix by another artist second). Use only the exact
+   `uri` a search returned — never a guessed or constructed one. No confident
+   match → leave it out and list it as unmatched.
+2. **Create the playlist with the Web API directly**, not
+   `spogo playlist create` — that returns 403 Forbidden (it uses an endpoint
+   Spotify no longer accepts; verified 2026-10-09), and spogo has no way to set
+   a description anyway. One call sets the name and description:
+
+       curl -s -X POST -H "Authorization: Bearer $(jq -r .access_token ~/.config/spogo/oauth/default.json)" \
+         -H 'Content-Type: application/json' https://api.spotify.com/v1/me/playlists \
+         -d '{"name":"<name>","public":false,"description":"<description>"}'
+
+   Build the JSON with `jq -n` so quotes in captions can't break it, and
+   never echo the token. The response's `id` is the playlist ID.
+   - **Name**: after the source — uploader plus the annotation or topic, the
+     same composition as the entry heading (e.g. `trevornoah · night out in
+     NYC`).
+   - **Description**: the source URL and the date the item was added to the
+     Inbox (Todoist `addedAt` in America/Chicago), e.g.
+     `From https://www.instagram.com/reel/… — added to Inbox 2026-10-08`.
+3. **Add the tracks**: `spogo --auth oauth playlist add <playlist-id> <uri> …`
+   (verified working 2026-10-09), in the order the item listed them.
+4. **Link it from the daily note**: put the playlist URL
+   (`https://open.spotify.com/playlist/<id>`) in the entry above the track
+   list, and mark unmatched tracks in the list.
+
+The access token lasts an hour. Check `spogo auth oauth status` first; if it
+says expired, run any `spogo --auth oauth` command (e.g. a search) to refresh
+it and check again (refresh is unverified). If it is still expired or not
+authenticated, stop making playlists, ask the user to run
+`spogo auth oauth login`, and list the songs still waiting.
+
+Playlists are created only in a real run — a dry run lists the matches and
+the would-be name and description. The API reported `"public": true` on
+reading back a playlist created with `"public": false`; that wasn't
+investigated, so mention it to the user if it matters.
 
 ### YouTube — description only
 
@@ -250,9 +287,9 @@ Follow **obsidian-formatting**; all vault access via `mcp__obsidian__*` tools.
   open.
 - End with a per-item report: title → daily note and section, what substance
   was obtained (transcript / caption / excerpt / annotation-only), and whether
-  it was completed, left open, or skipped as non-content. For music reels,
-  also report how many tracks were liked on Spotify and any left unmatched
-  or not yet liked.
+  it was completed, left open, or skipped as non-content. For items with
+  songs, also report the playlist link, how many tracks went in, and any left
+  unmatched.
 
 ## Dry run
 
