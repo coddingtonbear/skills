@@ -144,7 +144,12 @@ connector is abandoned.
      Inbox (Todoist `addedAt` in America/Chicago), e.g.
      `From https://www.instagram.com/reel/… — added to Inbox 2026-10-08`.
 3. **Add the tracks**: `spogo --auth oauth playlist add <playlist-id> <uri> …`
-   (verified working 2026-10-09), in the order the item listed them.
+   (verified working 2026-10-09), in the order the item listed them. Each
+   URI must be its own argument: the shell is zsh, which doesn't word-split
+   an unquoted `$uris` string — that sent all of them as one argument and
+   added nothing. Use an array (`"${(@)ids/#/spotify:track:}"`) and confirm
+   with `spogo --auth oauth --json playlist tracks <id>` that the count
+   matches.
 4. **Link it from the daily note**: put the playlist URL
    (`https://open.spotify.com/playlist/<id>`) in the entry above the track
    list, and mark unmatched tracks in the list.
