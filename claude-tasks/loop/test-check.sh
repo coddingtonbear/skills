@@ -215,14 +215,6 @@ expect 0 "keeps firing while it sits unclaimed (or a crashed firing left it mid-
 fixture "t1 - $BOT 2026-08-26T10:00:00Z 0 - Phase: 1/2 — working (started 2026-08-26T09:00)"
 expect 0 "a claimed task with no ask is the same standing positive (crash recovery)"
 
-# Between self-review steps the task has no ask and no claude-inflight on
-# purpose; the standing positive is what brings on the next step.
-fixture "t1 - $BOT 2026-08-26T10:00:00Z 0 - Phase: 1/1 — self-review: fixes for review 1 due — PR https://github.com/acme/widgets/pull/42"
-expect_says 0 'assigned to Claude with no open ask' "a PR between self-review steps keeps firing"
-[ ! -e "$FIXDIR/gh.calls" ] || fail "looked up a PR for a task that isn't Waiting"
-PASS=$((PASS + 1))
-echo "  ok: a self-review task's PR isn't watched (the standing positive covers it)"
-
 fixture "t9 - - 2026-08-26T10:00:00Z 0 - Phase: 2/3 — delivered\\n\\nold body"
 expect_says 0 'looks handed back' "fires on a Phase-bearing task no longer assigned to Claude"
 fixture "t9 - - 2026-08-26T10:00:00Z 0 - Phase: 2/3 — delivered\\n\\n## Handing over\\ndone"

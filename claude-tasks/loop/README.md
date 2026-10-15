@@ -113,10 +113,7 @@ It fires when any of these hold:
   nobody picked up, or a firing that crashed mid-claim; either way the next
   firing should look at it. (This also covers an answered ask: completing the
   ask subtask removes it from the open set, leaving the work task
-  assigned-with-no-ask, and a PR in its self-review cycle: between the
-  review and fix steps the task is deliberately left with no ask and no
-  `claude-inflight`, so each tick brings on the next step.) A standing
-  positive: it keeps firing until the
+  assigned-with-no-ask.) A standing positive: it keeps firing until the
   state changes, and deliberately records no fingerprint, so a crashed
   firing can never be fingerprinted into silence. The one exception is an
   unclaimed task (no `Phase:` line) whose Todoist date is still in the
