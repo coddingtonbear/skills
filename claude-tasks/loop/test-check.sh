@@ -232,6 +232,50 @@ rm -f "$CLAUDE_TASKS_STATE_FILE" "${CLAUDE_TASKS_STATE_FILE%.state}.snap"
 expect 10 "an orphaned ask subtask under a closed-out handback is not a handback"
 
 echo
+echo "tasks dated in the future:"
+# Sets due.date on task $1 in the project fixture ("-" clears it), the way
+# Todoist's tasks endpoint carries it. Dates far from today keep these cases
+# independent of when the suite runs.
+due_fixture() {
+  python3 - "$FIXDIR/$PID.json" "$1" "$2" <<'PY2'
+import json, sys
+out, tid, due = sys.argv[1:]
+d = json.load(open(out))
+for t in d["results"]:
+    if t["id"] == tid:
+        t["due"] = None if due == "-" else {"date": due, "is_recurring": False}
+json.dump(d, open(out, "w"))
+PY2
+}
+rm -f "$CLAUDE_TASKS_STATE_FILE" "${CLAUDE_TASKS_STATE_FILE%.state}.snap"
+fixture "t1 - $BOT 2026-08-26T10:00:00Z 0 -"
+due_fixture t1 2099-01-01
+expect 0 "fires once on first sight (no recorded fingerprint)"
+expect 10 "an unclaimed task dated in the future is not a standing positive"
+# Rescheduling bumps updated_at in Todoist, which is what the fingerprint sees.
+fixture "t1 - $BOT 2026-08-26T11:00:00Z 0 -"
+due_fixture t1 2099-01-01T09:00:00Z
+expect 0 "fires on the reschedule itself (the fingerprint moved)"
+expect 10 "a future date with a time holds it too"
+fixture "t1 - $BOT 2026-08-26T12:00:00Z 0 -"
+due_fixture t1 2099-01-01T09:00:00
+"$CHECK" >/dev/null 2>&1 || true
+expect 10 "so does a future floating date-time"
+due_fixture t1 2000-01-01
+expect_says 0 'assigned to Claude with no open ask' "fires once the date has arrived"
+expect 0 "and keeps firing, like any queued task"
+due_fixture t1 "$(date +%F)"
+expect 0 "a date of today counts as arrived"
+due_fixture t1 2000-01-01T09:00:00Z
+expect 0 "a past date-time counts as arrived"
+due_fixture t1 not-a-date
+expect 0 "fires (fails open) on a date it cannot parse"
+fixture "t1 - $BOT 2026-08-26T10:00:00Z 0 - Phase: 1/2 — working (started 2026-08-26T09:00)"
+due_fixture t1 2099-01-01
+expect_says 0 'assigned to Claude with no open ask' \
+  "a claimed task keeps firing whatever its date (the date only gates starting)"
+
+echo
 echo "waiting tasks and the fingerprint:"
 # A waiting task: assigned to the bot, with an open ask subtask assigned to
 # the user. The ask's own body starts with a Phase: line (the skill's ask

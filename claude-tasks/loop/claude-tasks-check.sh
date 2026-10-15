@@ -27,7 +27,10 @@
 #   3. a task assigned to Claude has no open ask subtask -- released work
 #      nobody picked up, or a firing that crashed mid-claim; either way the
 #      skill should look at it (standing positive: keeps firing until the
-#      state changes)
+#      state changes). Except an unclaimed task (no `Phase:` line) whose
+#      Todoist date is still in the future: the skill won't start it before
+#      then, so it waits until the date (or time) arrives. An unparseable
+#      date counts as arrived
 #   4. a task bearing the skill's `Phase:` line is no longer assigned to
 #      Claude and has no `## Handing over` section -- the user took it back
 #      and the close-out hasn't run (standing positive)
@@ -211,9 +214,10 @@ IDS="$(printf '%s' "$IDS" | grep -E '^[A-Za-z0-9]{8,64}$' || true)"
 [ -n "$IDS" ] || skip "no projects are shared with this account"
 
 # --- every open task in those projects, as raw rows ------------------------
-# t|<id>|<parent or ->|<responsible uid or ->|<updated_at>|,labels,|<flags>
+# t|<id>|<parent or ->|<responsible uid or ->|<updated_at>|,labels,|<flags>|<due or ->
 #   flags: P = description carries a "Phase:" line, H = a "## Handing over"
-#   section; both are the skill's own markers.
+#   section; both are the skill's own markers. due is the task's `due.date`
+#   (a date, or a date and time), never its deadline.
 # r|<task id>|<owner>/<repo>/<n> per PR URL found in a description.
 EXTRACT='
 import json, re, sys
@@ -225,9 +229,11 @@ for t in d.get("results") or []:
     flags = ""
     if re.search(r"^Phase:", desc, re.M): flags += "P"
     if re.search(r"^## Handing over", desc, re.M): flags += "H"
-    print("t|%s|%s|%s|%s|,%s,|%s" % (
+    due = (t.get("due") or {}).get("date") or "-"
+    print("t|%s|%s|%s|%s|,%s,|%s|%s" % (
         t.get("id"), t.get("parent_id") or "-", t.get("responsible_uid") or "-",
-        t.get("updated_at"), ",".join(labels), flags or "-"))
+        t.get("updated_at"), ",".join(labels), flags or "-",
+        str(due).replace("|", "")))
     for o, r, n in sorted(set(PR.findall(desc))):
         print("r|%s|%s/%s/%s" % (t.get("id"), o, r, n))
 print("next|%s" % (d.get("next_cursor") or ""))
@@ -256,14 +262,27 @@ done
 # Waiting tasks point at as pr| lines.
 CLASSIFY='
 import sys
+from datetime import date, datetime
 uid = sys.argv[1]
+def not_yet(due):
+    # True only when the date is certainly still ahead; anything unreadable
+    # counts as arrived, so the check fails open.
+    if due == "-":
+        return False
+    try:
+        if "T" not in due:
+            return date.fromisoformat(due) > date.today()
+        when = datetime.fromisoformat(due.replace("Z", "+00:00"))
+        return when > datetime.now(when.tzinfo)
+    except ValueError:
+        return False
 tasks, prs, comments = {}, {}, {}
 for line in sys.stdin:
     line = line.rstrip("\n")
     if line.startswith("t|"):
-        _, tid, parent, resp, updated, labels, flags = line.split("|")
+        _, tid, parent, resp, updated, labels, flags, due = line.split("|")
         tasks[tid] = dict(parent=parent, resp=resp, updated=updated,
-                          labels=labels, flags=flags)
+                          labels=labels, flags=flags, due=due)
     elif line.startswith("r|"):
         _, tid, ref = line.split("|")
         prs.setdefault(tid, set()).add(ref)
@@ -277,6 +296,9 @@ for tid, t in tasks.items():
         asks.setdefault(t["parent"], []).append(tid)
 for tid in sorted(mine):
     if tid not in asks:
+        t = tasks[tid]
+        if "P" not in t["flags"] and not_yet(t["due"]):
+            continue  # queued for a date that has not come yet
         print("fire|task %s is assigned to Claude with no open ask" % tid)
 # Top-level tasks only: an ask subtask also opens with a Phase: line (the
 # ask template) and never gets a Handing over section, so it must never be a

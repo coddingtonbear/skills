@@ -115,7 +115,11 @@ It fires when any of these hold:
   ask subtask removes it from the open set, leaving the work task
   assigned-with-no-ask.) A standing positive: it keeps firing until the
   state changes, and deliberately records no fingerprint, so a crashed
-  firing can never be fingerprinted into silence;
+  firing can never be fingerprinted into silence. The one exception is an
+  unclaimed task (no `Phase:` line) whose Todoist date is still in the
+  future: the skill won't start it yet, so it doesn't fire until that date
+  (or time) arrives. Edits to it still count through the fingerprint. A date
+  the check can't parse fires, like any other uncertainty;
 - a **top-level** task bearing the skill's `Phase:` line is **no longer
   assigned to Claude** and has no `## Handing over` section — you took it
   back and the close-out hasn't run (also standing). Subtasks are never
