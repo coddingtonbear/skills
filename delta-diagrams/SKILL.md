@@ -169,8 +169,7 @@ Both Obsidian and GitHub (PR descriptions, comments, Markdown files) render
   edges and replies contain `--` and `-->`, which end the comment early and
   spill the rest of it into the rendered page. Where the surrounding
   document keeps AI-written material hidden (e.g. PR talking points), put
-  the diagram in a collapsed `<details>` block instead, as the calling
-  skill describes.
+  the diagram in its own visible section, as the calling skill describes.
 - Leave a blank line before and after the fence when it sits inside
   `<details>` or other HTML, or GitHub renders the fence as plain text.
 
