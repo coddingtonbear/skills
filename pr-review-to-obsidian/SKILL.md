@@ -112,147 +112,27 @@ worth drawing. When in doubt, do it: it's cheap relative to the review itself.
    — no image asset, no Artifact required for this to appear in the note.
    Use `flowchart` for composition/data-flow graphs, `sequenceDiagram` for
    runtime interactions, and `stateDiagram-v2` for state machines. Label
-   edges; use a dashed edge (`-.->`) with a short label starting `gap:` for a
-   "should connect but doesn't" gap (unstyled, so it doesn't read as a
-   removal); annotate an inferred (not separately stored) state with a
-   Mermaid `note`.
-4. **Show what the PR changed, not just the end state.** Draw one *delta*
-   diagram of the after-state that color-codes the change, instead of a
-   separate before and after pair. See [Delta diagrams](#delta-diagrams)
-   below for when to use the structural vs. the sequence form and the exact
-   Mermaid conventions. Fall back to a before/after pair at the same zoom
-   level only when the PR is a wholesale rewrite of the area (roughly half or
-   more of the drawn nodes would be red or green), where a delta turns into
-   noise.
+   edges.
+4. **Show what the PR changed, not just the end state.** Draw the diagrams
+   as *delta* diagrams per **delta-diagrams**: one after-state diagram that
+   color-codes the change instead of a separate before and after pair. That
+   skill has when to use the structural vs. the sequence form, the `gap:`
+   edge and inferred-state `note` conventions, the exact Mermaid palette and
+   templates, and when to fall back to a before/after pair.
 5. **Caption each diagram** with what it shows, and where a friction point it
    surfaces matches a Step 2 finding (especially one already filed under
    reuse/simplification/efficiency/altitude), name that finding by its Step 6
    heading text (e.g. "see 'updateData never refreshes width/height' below")
    so a reader can trace from the picture to the itemized write-up. Findings
    are no longer a numbered list, so don't invent numbering (①②③…) to stand
-   in for it. Since Mermaid has no legend, end each delta diagram's caption
-   with the legend line: *Green `+` added · red `−` removed (dashed) · amber
-   `~` changed · unstyled unchanged.*
+   in for it. End each delta diagram's caption with the legend line from
+   **delta-diagrams**.
 6. **Close with "Angles worth raising, not conclusions"** — a short (≤4
    item) numbered list of restructuring directions the diagrams suggest,
    phrased as discussion prompts the PR author can weigh, not a decided
    redesign. This is discussion fodder, not a recommendation to implement.
 7. This becomes its own top-level section in the note (Step 6) — draft it
    now so Step 6 can place it directly.
-
-### Delta diagrams
-
-A delta diagram shows the after-state with the change marked on it, so the
-reader sees what moved without comparing two pictures. Two forms:
-
-- **Structural delta (`flowchart`)** — use when the PR adds, removes, or
-  rewires components, modules, hooks, services, stores, or dependencies:
-  something now depends on something it didn't before (or no longer does).
-  Answers "what is connected to what now?"
-- **Sequence delta (`sequenceDiagram`)** — use when the *order, timing, or
-  sync/async nature* of an interaction changes: a call moves after a
-  response, a hop is added or removed, work becomes async, a retry or
-  fallback path appears. This often matters even when the boxes stay the
-  same, which a structural diagram can't show. Answers "what happens, in
-  what order, now?"
-- **Both** when the structural change exists to change behavior (e.g. a
-  queue introduced so a slow call leaves the request path): the flowchart
-  shows the new dependency, the sequence shows why it matters.
-- A **state-machine delta** (`stateDiagram-v2`) follows the same color
-  rules via `classDef` and `class <state> added`, for a PR that adds or
-  removes states or transitions of an existing lifecycle.
-- A brand-new feature with nothing removed still benefits: green new parts
-  against unstyled existing context show exactly where it attaches.
-
-Conventions for both forms:
-
-- **Four categories, each with a color *and* a text cue**, so the diagram
-  still reads in grayscale or for a color-blind reader. Prefix every changed
-  node, participant, and edge/message label with its marker:
-  - `+` **added** — green
-  - `−` **removed** — red, dashed (U+2212 minus, so it doesn't read as a
-    bullet or hyphen)
-  - `~` **changed** — amber: it exists before and after, but its behavior
-    or responsibility changed (say how in its subtitle or label)
-  - no prefix, **unchanged** — default styling
-- **Draw removed parts in the after-state diagram**, where they used to be,
-  so the reader sees what was replaced.
-- **Keep unchanged context to one hop** from something that changed. It is
-  there to anchor the change, not to map the system.
-- **One zoom level per diagram** (C4-style: services *or* modules *or*
-  classes, never mixed).
-
-Structural delta — copy these `classDef`s verbatim so every review uses the
-same palette. Declare nodes first, then one edge per line, because
-`linkStyle` targets edges by 0-based declaration order (a chained
-`A --> B --> C` counts as two edges and makes the indices easy to get wrong):
-
-````markdown
-```mermaid
-flowchart TB
-  classDef added fill:#EAF3DE,stroke:#3B6D11,color:#27500A
-  classDef removed fill:#FCEBEB,stroke:#A32D2D,color:#791F1F,stroke-dasharray:5 4
-  classDef changed fill:#FAEEDA,stroke:#854F0B,color:#633806
-
-  API["API gateway<br/><small>routes /orders</small>"]
-  Order["~ Order service<br/><small>publishes OrderPlaced</small>"]:::changed
-  Pay["Payment service"]
-  Bus["+ Event bus"]:::added
-  Notifier["+ Notifier<br/><small>consumes, sends email</small>"]:::added
-  Email["− Email service"]:::removed
-
-  API -->|"POST /orders"| Order
-  Order -->|"charge()"| Pay
-  Order -->|"+ publish OrderPlaced"| Bus
-  Bus -->|"+ OrderPlaced"| Notifier
-  Order -.->|"− sendConfirmation()"| Email
-
-  linkStyle 2,3 stroke:#639922,stroke-width:2px
-  linkStyle 4 stroke:#E24B4A,stroke-width:2px,stroke-dasharray:5 4
-```
-````
-
-Color edges with `linkStyle`: green `#639922` for added, red `#E24B4A` dashed
-for removed, amber `#BA7517` for changed. Recount the indices after any
-edit to the edge list.
-
-Sequence delta — Mermaid can't color individual messages, so shade the
-changed span with a `rect` block instead (translucent `rgba`, which reads in
-both light and dark Obsidian themes), keep the prefixes in participant
-aliases and message text, and end removed messages with a cross (`-x` /
-`--x`):
-
-````markdown
-```mermaid
-sequenceDiagram
-  participant C as Client
-  participant O as ~ Order svc
-  participant P as Payment
-  participant E as − Email svc
-  participant B as + Event bus
-  participant N as + Notifier
-
-  C->>O: POST /orders
-  O->>P: charge()
-  P-->>O: ok
-  rect rgba(226, 75, 74, 0.15)
-    O-xE: − sendConfirmation()
-    E--xO: − sent
-  end
-  rect rgba(99, 153, 34, 0.18)
-    O->>B: + publish OrderPlaced
-  end
-  rect rgba(186, 117, 23, 0.18)
-    O-->>C: ~ 201 Created (no longer waits for email)
-  end
-  rect rgba(99, 153, 34, 0.18)
-    B-)N: + OrderPlaced (async)
-  end
-```
-````
-
-Shade only the messages that changed. Leave unchanged messages outside any
-`rect` so the shading stays meaningful. Use `-)` for async messages.
 
 ## Step 5: Build the filename
 
@@ -494,6 +374,7 @@ in the conversation.
 
 - **code-review** — the underlying review engine this wraps
 - **git-and-pr-conventions** — branch/ticket inference, merge-base diffing
+- **delta-diagrams** — the Mermaid conventions for Step 4's diagrams
 - **artifact-diagramming** — drawing judgment for the Step 4 architecture
   diagrams (what's worth depicting, how to label it) — used for that
   judgment only; the diagrams themselves are Mermaid, not an Artifact
