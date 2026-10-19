@@ -60,6 +60,18 @@ printf '#!/usr/bin/env bash\nexit 1\n' > "$STUBDIR/td"
 chmod +x "$STUBDIR/td"
 export PATH="$STUBDIR:$PATH"
 
+# A stub usage gate stands in for claude-tasks-usage.sh throughout, so no
+# test ever reads the real ~/.claude/.credentials.json or calls Anthropic;
+# test-usage.sh covers the gate's own logic. Until the usage section below
+# it always says "fire".
+USAGESTUB="$TMPROOT/usage-stub.sh"
+export CLAUDE_TASKS_USAGE_CHECK="$USAGESTUB"
+stub_usage() {  # <exit status> [stdout]
+  printf '#!/usr/bin/env bash\necho x >> "%s"\nprintf "%%s\\n" "%s"\nexit %s\n' "$TMPROOT/usage-calls.txt" "${2:-}" "$1" > "$USAGESTUB"
+  chmod +x "$USAGESTUB"
+}
+stub_usage 0
+
 fail() { echo "FAIL: $1"; exit 1; }
 
 # No profile at all -- no --profile, no CLAUDE_TASKS_PROFILE -- refuses to
@@ -187,6 +199,70 @@ export CLAUDE_TASKS_PRECHECK=0
 loop_briefly
 [ -f "$CAPTURED_PROMPT" ] || fail "CLAUDE_TASKS_PRECHECK=0 should fire on every tick"
 unset CLAUDE_TASKS_PRECHECK
+
+# --- usage gate -------------------------------------------------------------
+# The gate runs before the pre-check on every tick. Exit 10 holds the tick:
+# no firing, and the pre-check is not consulted either -- it would otherwise
+# fingerprint a change nobody acted on. Anything else lets the tick through.
+stub_check 0
+rm -f "$TMPROOT/usage-calls.txt" "$TMPROOT/check-calls.txt"
+printf '#!/usr/bin/env bash\necho x >> "%s"\nexit 0\n' "$TMPROOT/check-calls.txt" > "$CHECKSTUB"
+stub_usage 10 "$(( $(date +%s) + 600 ))"
+loop_briefly
+if [ -f "$CAPTURED_PROMPT" ]; then fail "usage gate said hold (exit 10) but a firing happened anyway"; fi
+[ -f "$TMPROOT/usage-calls.txt" ] || fail "the usage gate was never consulted"
+if [ -f "$TMPROOT/check-calls.txt" ]; then fail "a held tick still ran the pre-check"; fi
+
+stub_usage 0
+loop_briefly
+[ -f "$CAPTURED_PROMPT" ] || fail "usage gate said fire (exit 0) but no firing happened"
+[ -f "$TMPROOT/check-calls.txt" ] || fail "a tick the gate let through skipped the pre-check"
+
+# Only exit 10 holds: a broken gate must not silently stall the loop.
+stub_usage 3
+loop_briefly
+[ -f "$CAPTURED_PROMPT" ] || fail "a usage gate that failed (exit 3) should fire, not hold"
+
+export CLAUDE_TASKS_USAGE_CHECK="$TMPROOT/does-not-exist.sh"
+loop_briefly
+[ -f "$CAPTURED_PROMPT" ] || fail "a missing usage gate script should fire, not hold"
+export CLAUDE_TASKS_USAGE_CHECK="$USAGESTUB"
+
+# A held tick sleeps until the window resets (plus a short margin), clamped
+# to min..max -- not the idle backoff, and not min when the reset is further
+# off. MIN is 1s here, so the ~10m wait can only have come from the reset time.
+stub_check 0
+hold_once() {  # <min> <max>
+  "$HERE/claude-tasks-loop.sh" --profile personal "$1" "$2" >"$TMPROOT/hold.out" 2>&1 &
+  local pid=$!
+  sleep 2
+  kill -TERM "$pid" 2>/dev/null || true
+  pkill -TERM -P "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+}
+stub_usage 10 "$(( $(date +%s) + 600 ))"
+hold_once 1s 1h
+grep -qE 'last run: held; next check in 10m(2[0-9]|30)s' "$TMPROOT/hold.out" \
+  || fail "held tick did not sleep until the reset time: $(grep 'last run' "$TMPROOT/hold.out")"
+hold_once 1s 2m
+grep -q 'last run: held; next check in 2m0s' "$TMPROOT/hold.out" \
+  || fail "held wait was not clamped to max: $(grep 'last run' "$TMPROOT/hold.out")"
+# A reset time already past (or none at all) holds for min, never zero.
+stub_usage 10 "$(( $(date +%s) - 600 ))"
+hold_once 1s 1h
+grep -q 'last run: held; next check in 0m1s' "$TMPROOT/hold.out" \
+  || fail "a past reset time should hold for min: $(grep 'last run' "$TMPROOT/hold.out")"
+stub_usage 10 "not-a-time"
+hold_once 1s 1h
+grep -q 'last run: held; next check in 0m1s' "$TMPROOT/hold.out" \
+  || fail "an unparseable reset time should hold for min: $(grep 'last run' "$TMPROOT/hold.out")"
+
+# --once is an explicit "run now", so it ignores the gate like the pre-check.
+stub_usage 10 "$(( $(date +%s) + 600 ))"
+rm -f "$CAPTURED_PROMPT"
+"$HERE/claude-tasks-loop.sh" --profile personal --once >/dev/null 2>&1
+[ -f "$CAPTURED_PROMPT" ] || fail "--once should fire regardless of the usage gate"
+stub_usage 0
 
 # --- pacing -----------------------------------------------------------------
 # After a firing that worked, the next tick comes after the short

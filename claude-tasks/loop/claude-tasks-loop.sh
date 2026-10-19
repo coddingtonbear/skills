@@ -49,6 +49,15 @@
 # (no token, any API trouble => fire anyway), so it can only remove firings
 # from the schedule, never add them. Set CLAUDE_TASKS_PRECHECK=0 to fire on
 # every tick as before.
+#
+# Usage gate: before even the pre-check, claude-tasks-usage.sh asks Anthropic
+# how much of the subscription's 5-hour window is spent, and a tick at or
+# above CLAUDE_TASKS_USAGE_CAP percent (default 90) is held: no firing, and
+# the loop sleeps until the window resets (within min..max) instead of
+# polling. It runs first so a held tick never lets the pre-check record a
+# change as handled. It fails open too (no credentials, API trouble => fire),
+# so it can only remove firings, never add them. CLAUDE_TASKS_USAGE_CAP=0
+# disables it. Like the pre-check, --once ignores it: that's "run now".
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -343,6 +352,25 @@ fi
 
 CHECK="${CLAUDE_TASKS_CHECK:-$HERE/claude-tasks-check.sh}"
 PRECHECK="${CLAUDE_TASKS_PRECHECK:-1}"
+USAGE_CHECK="${CLAUDE_TASKS_USAGE_CHECK:-$HERE/claude-tasks-usage.sh}"
+
+# Exit 10 -- and only exit 10 -- means "the 5-hour window is spent, hold".
+# Every other status, including a crash in the gate itself, lets the tick go
+# on to the pre-check. On a hold the gate's stdout is the window's reset time
+# (epoch seconds), kept in HOLD_UNTIL for the sleep below; anything
+# unparseable there means "hold for min".
+HOLD_UNTIL=""
+should_hold() {
+  [ -x "$USAGE_CHECK" ] || return 1
+  local out status
+  out="$("$USAGE_CHECK")"; status=$?
+  [ "$status" -eq 10 ] || return 1
+  case "$out" in
+    *[!0-9]*|"") HOLD_UNTIL="" ;;
+    *) HOLD_UNTIL="$out" ;;
+  esac
+  return 0
+}
 
 # Exit 10 -- and only exit 10 -- means "nothing could have changed, skip".
 # Every other status, including a crash in the checker itself, fires.
@@ -357,12 +385,24 @@ should_skip() {
 BACKOFF=$MIN_WAIT
 while true; do
   LAST_RESULT=unknown
-  if should_skip; then
+  if should_hold; then
+    LAST_RESULT=held
+  elif should_skip; then
     LAST_RESULT=skipped
   else
     fire
   fi
   case "$LAST_RESULT" in
+    # The window is spent: nothing a firing could do until it resets, so sleep
+    # until then (a little past, so the next check sees the new window),
+    # clamped to min..max. Like a skipped tick it earns no backoff.
+    held)
+      BACKOFF=$MIN_WAIT; WAIT=$MIN_WAIT
+      if [ -n "$HOLD_UNTIL" ]; then
+        WAIT=$(( HOLD_UNTIL + 30 - $(date +%s) ))
+        [ "$WAIT" -ge "$MIN_WAIT" ] || WAIT=$MIN_WAIT
+        [ "$WAIT" -le "$MAX_WAIT" ] || WAIT=$MAX_WAIT
+      fi ;;
     # Work done means there may well be more queued: look again almost at
     # once. If there isn't, the pre-check skips that tick for free.
     worked) BACKOFF=$MIN_WAIT; WAIT=$WORKED_WAIT ;;

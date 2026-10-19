@@ -192,6 +192,28 @@ with those lines, is also appended to `$LOGDIR/precheck.log` (next to the
 `queue.state` hash and `queue.snap` snapshot it compares against), so a run
 of unexpected firings can be read back after the terminal has scrolled.
 
+**Usage gate**: before even the pre-check, `claude-tasks-usage.sh` asks
+Anthropic how much of your subscription's **5-hour window** is spent — the
+same endpoint Claude Code's own `/usage` reads, with the OAuth token Claude
+Code keeps in `~/.claude/.credentials.json` — and a tick at or above
+`CLAUDE_TASKS_USAGE_CAP` percent (default `90`) is **held**: no firing, and
+the loop sleeps until the window resets (a little past it, clamped to
+`min..max`) rather than polling. The point is that a headless firing never
+eats the last of a window you may want for yourself. It runs *before* the
+pre-check deliberately: a held tick must not let the pre-check fingerprint a
+change as handled. It is a gate on *starting* a firing, not on a running one
+— a firing that starts at 89% can carry the window past the cap — so set a
+lower cap if that matters. Like the pre-check it fails open (no credentials
+file, an expired token, an HTTP error, a response without the field ⇒ fire)
+and so can only remove firings, never add them; a firing refreshes the token
+on its way, so an expired one heals itself. `CLAUDE_TASKS_USAGE_CAP=0`
+disables it, `--once` ignores it. Its decisions go to `$LOGDIR/usage.log`.
+The endpoint is undocumented, so if Anthropic changes it the gate degrades
+to firing every tick, visibly in that log, rather than holding blind. Run it
+by hand to see the current percentage (exit `0` fire, `10` hold):
+
+    ./claude-tasks-usage.sh; echo $?
+
 **It cooperates with the overlap lock.** A tick whose firing the `flock` would
 turn away is skipped at the pre-check instead, before any API call — otherwise
 the check would fingerprint a change, the firing would be refused the lock, and
