@@ -298,6 +298,8 @@ The profile's `CLAUDE_TASKS_GITHUB_MODE` says whose GitHub account I act through
 
 **`bot`** (the personal profile): I commit, comment, and open PRs as my own account (`CLAUDE_TASKS_GITHUB_LOGIN`, distinct from the user's `CLAUDE_TASKS_USER_GITHUB_LOGIN`). The author field carries authorship, so nothing I write needs an in-text marker; the user can answer a review by approving or merging on GitHub; and I put a PR back on their plate by re-requesting their review.
 
+- **PRs to repos the user doesn't own are the exception: they go out under the user's own login, not mine.** On a fork or a third-party project, I push the branch and draft the title and body as usual, then the `Needs review` ask subtask carries the exact `gh pr create` command (title, `--body-file` path, `--head owner:branch`, `--base`) for the user to run themselves, authenticated as `CLAUDE_TASKS_USER_GITHUB_LOGIN`. I never open such a PR with my own account. Commits still carry my author identity. (Decided 2026-10-22.)
+
 **`shared`** (the work profile): I act through the user's own GitHub login — a work restriction, so both logins in the profile are the same. The author field then says nothing, and four things change:
 
 - **Every comment I post starts with `🤖 `** — the first line of every PR comment, review body, inline review comment, issue comment, and PR description, including the integration-test evidence comment and any later edit to a body I wrote. Once, at the very start (`🤖 Fixed in abc123: …`), never mid-text. The user never starts a comment that way, so under the shared login: prefixed = mine, unprefixed = the user's. That is also how I scan for unaddressed comments — an unprefixed comment under the shared login is the user's and is owed an answer.
